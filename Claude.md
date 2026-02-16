@@ -411,6 +411,13 @@ workspace_only = true
 - 最小化提交：尽量小的变更集
 - 提交顺序：docs → trait → impl → test → fix/refactor
 
+### Session 切换协议
+当上下文即将满（>85%）时执行：
+1. 更新 `~/.claude/projects/.../memory/MEMORY.md` 中的实现进度
+2. 提示用户开启新 session
+3. 新 session 会自动加载 MEMORY.md，读取本文件和 `docs/implementation-plan.md` 即可无缝衔接
+4. 新 session 首句说"继续开发 RRClaw"即可
+
 ---
 
 ## 参考
