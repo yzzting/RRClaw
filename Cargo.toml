@@ -1,0 +1,54 @@
+[package]
+name = "rrclaw"
+version = "0.1.0"
+edition = "2021"
+description = "安全优先的 AI 助手基础设施，100% Rust，Trait 可插拔架构"
+license = "MIT"
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "process", "time", "sync"] }
+async-trait = "0.1"
+
+# HTTP 客户端
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+reedline = "0.37"
+
+# 配置
+figment = { version = "0.10", features = ["toml", "env"] }
+directories = "5"
+
+# 数据库 + 搜索
+rusqlite = { version = "0.32", features = ["bundled"] }
+tantivy = "0.22"
+tantivy-jieba = "0.18"
+
+# 错误处理
+color-eyre = "0.6"
+thiserror = "2"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 工具
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
