@@ -1,1 +1,274 @@
-// Config 结构体定义 — 待实现
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use color_eyre::eyre::{Context, Result};
+use figment::providers::{Env, Format, Serialized, Toml};
+use figment::Figment;
+use serde::{Deserialize, Serialize};
+
+use crate::security::AutonomyLevel;
+
+/// 全局配置
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Config {
+    pub default: DefaultConfig,
+    pub providers: HashMap<String, ProviderConfig>,
+    pub memory: MemoryConfig,
+    pub security: SecurityConfig,
+}
+
+/// 默认 Provider 设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultConfig {
+    pub provider: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
+/// 单个 Provider 的连接配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    /// Claude 使用 "x-api-key"，其他 Provider 为 None（默认 Bearer）
+    pub auth_style: Option<String>,
+}
+
+/// 记忆系统配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    pub backend: String,
+    pub auto_save: bool,
+}
+
+/// 安全策略配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub autonomy: AutonomyLevel,
+    pub allowed_commands: Vec<String>,
+    pub workspace_only: bool,
+}
+
+impl Default for DefaultConfig {
+    fn default() -> Self {
+        Self {
+            provider: "deepseek".to_string(),
+            model: "deepseek-chat".to_string(),
+            temperature: 0.7,
+        }
+    }
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            backend: "sqlite".to_string(),
+            auto_save: true,
+        }
+    }
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            autonomy: AutonomyLevel::Supervised,
+            allowed_commands: vec!["ls", "cat", "grep", "find", "echo", "pwd", "git"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            workspace_only: true,
+        }
+    }
+}
+
+/// 默认配置 TOML 模板
+const DEFAULT_CONFIG_TOML: &str = r#"[default]
+provider = "deepseek"
+model = "deepseek-chat"
+temperature = 0.7
+
+# 在下方添加你的 Provider 配置
+# [providers.deepseek]
+# base_url = "https://api.deepseek.com/v1"
+# api_key = "your-key"
+# model = "deepseek-chat"
+
+# [providers.claude]
+# base_url = "https://api.anthropic.com"
+# api_key = "your-key"
+# model = "claude-sonnet-4-5-20250929"
+# auth_style = "x-api-key"
+
+[memory]
+backend = "sqlite"
+auto_save = true
+
+[security]
+autonomy = "supervised"
+allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git"]
+workspace_only = true
+"#;
+
+impl Config {
+    /// 返回配置文件路径: `~/.rrclaw/config.toml`
+    pub fn config_path() -> Result<PathBuf> {
+        let base_dirs = directories::BaseDirs::new()
+            .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
+        Ok(base_dirs.home_dir().join(".rrclaw").join("config.toml"))
+    }
+
+    /// 加载配置，如果配置文件不存在则创建默认配置
+    pub fn load_or_init() -> Result<Self> {
+        let config_path = Self::config_path()?;
+
+        if !config_path.exists() {
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .wrap_err("创建配置目录失败")?;
+            }
+            std::fs::write(&config_path, DEFAULT_CONFIG_TOML)
+                .wrap_err("写入默认配置失败")?;
+        }
+
+        Self::load_from_path(&config_path)
+    }
+
+    /// 从指定路径加载配置（figment 多层合并）
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self> {
+        let config: Config = Figment::new()
+            .merge(Serialized::defaults(Config::default()))
+            .merge(Toml::file(path))
+            .merge(Env::prefixed("RRCLAW_").split("_"))
+            .extract()
+            .wrap_err("解析配置文件失败")?;
+
+        Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_has_sensible_values() {
+        let config = Config::default();
+        assert_eq!(config.default.provider, "deepseek");
+        assert_eq!(config.default.model, "deepseek-chat");
+        assert!((config.default.temperature - 0.7).abs() < f64::EPSILON);
+        assert_eq!(config.memory.backend, "sqlite");
+        assert!(config.memory.auto_save);
+        assert_eq!(config.security.autonomy, AutonomyLevel::Supervised);
+        assert!(config.security.workspace_only);
+        assert!(config.security.allowed_commands.contains(&"ls".to_string()));
+    }
+
+    #[test]
+    fn load_from_toml_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let toml_path = tmp.path().join("config.toml");
+        std::fs::write(
+            &toml_path,
+            r#"
+[default]
+provider = "glm"
+model = "glm-4-flash"
+temperature = 0.5
+
+[providers.glm]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key = "test-key"
+model = "glm-4-flash"
+
+[memory]
+backend = "sqlite"
+auto_save = false
+
+[security]
+autonomy = "full"
+allowed_commands = ["ls", "git"]
+workspace_only = false
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_from_path(&toml_path).unwrap();
+        assert_eq!(config.default.provider, "glm");
+        assert_eq!(config.default.model, "glm-4-flash");
+        assert!((config.default.temperature - 0.5).abs() < f64::EPSILON);
+        assert!(!config.memory.auto_save);
+        assert_eq!(config.security.autonomy, AutonomyLevel::Full);
+        assert!(!config.security.workspace_only);
+        assert_eq!(config.security.allowed_commands.len(), 2);
+
+        let glm = config.providers.get("glm").unwrap();
+        assert_eq!(glm.api_key, "test-key");
+        assert_eq!(glm.model, "glm-4-flash");
+        assert!(glm.auth_style.is_none());
+    }
+
+    #[test]
+    fn provider_with_auth_style() {
+        let tmp = tempfile::tempdir().unwrap();
+        let toml_path = tmp.path().join("config.toml");
+        std::fs::write(
+            &toml_path,
+            r#"
+[providers.claude]
+base_url = "https://api.anthropic.com"
+api_key = "sk-ant-test"
+model = "claude-sonnet-4-5-20250929"
+auth_style = "x-api-key"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_from_path(&toml_path).unwrap();
+        let claude = config.providers.get("claude").unwrap();
+        assert_eq!(claude.auth_style.as_deref(), Some("x-api-key"));
+    }
+
+    #[test]
+    fn missing_fields_use_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let toml_path = tmp.path().join("config.toml");
+        // 只写一个 section，其他应该用默认值
+        std::fs::write(
+            &toml_path,
+            r#"
+[default]
+provider = "minimax"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_from_path(&toml_path).unwrap();
+        assert_eq!(config.default.provider, "minimax");
+        // 其他字段保持默认
+        assert_eq!(config.memory.backend, "sqlite");
+        assert!(config.security.workspace_only);
+    }
+
+    #[test]
+    fn load_or_init_creates_default_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join(".rrclaw").join("config.toml");
+        assert!(!config_path.exists());
+
+        // 直接测试文件创建逻辑（不走 load_or_init 因为它用固定 home 路径）
+        let parent = config_path.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        std::fs::write(&config_path, DEFAULT_CONFIG_TOML).unwrap();
+
+        assert!(config_path.exists());
+        let config = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(config.default.provider, "deepseek");
+    }
+
+    #[test]
+    fn config_path_ends_with_rrclaw() {
+        let path = Config::config_path().unwrap();
+        assert!(path.ends_with(".rrclaw/config.toml"));
+    }
+}
