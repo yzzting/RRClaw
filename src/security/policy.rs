@@ -68,8 +68,9 @@ impl SecurityPolicy {
                 } else {
                     self.workspace_dir.join(path)
                 };
-                // 手动规范化路径（不解析 symlink，但处理 ..）
-                normalize_path(&joined)
+                let normalized = normalize_path(&joined);
+                // 向上查找可 canonicalize 的祖先目录，解析 symlink
+                canonicalize_with_ancestors(&normalized)
             }
         };
 
@@ -117,6 +118,38 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     components.iter().collect()
+}
+
+/// 向上查找可 canonicalize 的祖先目录，解析中间 symlink
+/// 例如 /var/folders/.../sub/dir/file.txt，如果 sub/dir 不存在，
+/// 会 canonicalize /var/folders/... 再拼接 sub/dir/file.txt
+fn canonicalize_with_ancestors(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    let mut suffix_parts = Vec::new();
+
+    loop {
+        match current.canonicalize() {
+            Ok(canonical) => {
+                let mut result = canonical;
+                for part in suffix_parts.into_iter().rev() {
+                    result = result.join(part);
+                }
+                return result;
+            }
+            Err(_) => {
+                if let Some(file_name) = current.file_name() {
+                    suffix_parts.push(file_name.to_os_string());
+                    current = current
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(current);
+                } else {
+                    // 到达根目录仍无法 canonicalize，返回原路径
+                    return path.to_path_buf();
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
