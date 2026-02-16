@@ -27,7 +27,7 @@ directories = "5"
 
 # 数据库 + 搜索
 rusqlite = { version = "0.32", features = ["bundled"] }
-tantivy = "0.22"
+tantivy = "0.25"
 tantivy-jieba = "0.18"
 
 # 错误处理
