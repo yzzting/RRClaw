@@ -435,6 +435,7 @@ workspace_only = true
 - 原子化提交：每个提交只做一件事
 - 最小化提交：尽量小的变更集
 - 提交顺序：docs → trait → impl → test → fix/refactor
+- 提交模版：feat，chore，docs，fix，refactor，test，使用英文 commit message
 
 ### Session 切换协议
 当上下文即将满（>85%）时执行：
