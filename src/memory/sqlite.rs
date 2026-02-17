@@ -10,6 +10,7 @@ use tantivy::schema::*;
 use tantivy::{doc, Index, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 use tokio::sync::Mutex;
 
+use crate::providers::ConversationMessage;
 use super::traits::{Memory, MemoryCategory, MemoryEntry};
 
 /// SQLite + tantivy 记忆实现
@@ -96,9 +97,17 @@ impl SqliteMemory {
                 category TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            )",
+            );
+            CREATE TABLE IF NOT EXISTS conversation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_conv_session ON conversation_history(session_id);",
         )
-        .wrap_err("创建 memories 表失败")?;
+        .wrap_err("创建数据库表失败")?;
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -108,6 +117,60 @@ impl SqliteMemory {
             content_field,
             category_field,
         })
+    }
+
+    /// 保存对话历史到指定 session
+    pub async fn save_conversation_history(
+        &self,
+        session_id: &str,
+        history: &[ConversationMessage],
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+
+        // 清除该 session 的旧历史
+        db.execute(
+            "DELETE FROM conversation_history WHERE session_id = ?1",
+            params![session_id],
+        )
+        .wrap_err("清除旧对话历史失败")?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        for (i, msg) in history.iter().enumerate() {
+            let payload = serde_json::to_string(msg).wrap_err("序列化对话消息失败")?;
+            db.execute(
+                "INSERT INTO conversation_history (session_id, seq, payload, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![session_id, i as i64, payload, now],
+            )
+            .wrap_err("写入对话历史失败")?;
+        }
+
+        Ok(())
+    }
+
+    /// 加载指定 session 的对话历史
+    pub async fn load_conversation_history(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ConversationMessage>> {
+        let db = self.db.lock().await;
+        let mut stmt = db
+            .prepare(
+                "SELECT payload FROM conversation_history WHERE session_id = ?1 ORDER BY seq ASC",
+            )
+            .wrap_err("准备查询对话历史失败")?;
+
+        let messages: Vec<ConversationMessage> = stmt
+            .query_map(params![session_id], |row| {
+                let payload: String = row.get(0)?;
+                Ok(payload)
+            })
+            .wrap_err("查询对话历史失败")?
+            .filter_map(|r| r.ok())
+            .filter_map(|payload| serde_json::from_str(&payload).ok())
+            .collect();
+
+        Ok(messages)
     }
 
     /// 从 SQLite 根据 key 查询完整条目
@@ -346,6 +409,95 @@ mod tests {
 
         let results = mem.recall("测试数据", 2).await.unwrap();
         assert!(results.len() <= 2);
+    }
+
+    #[tokio::test]
+    async fn save_and_load_conversation_history() {
+        use crate::providers::{ChatMessage, ConversationMessage, ToolCall};
+
+        let mem = create_test_memory().await;
+        let session_id = "test-session-2024";
+
+        let history = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: "你好".to_string(),
+            }),
+            ConversationMessage::AssistantToolCalls {
+                text: Some("让我查看".to_string()),
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+            ConversationMessage::ToolResult {
+                tool_call_id: "call_1".to_string(),
+                content: "file.txt".to_string(),
+            },
+            ConversationMessage::Chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "目录中有 file.txt".to_string(),
+            }),
+        ];
+
+        // 保存
+        mem.save_conversation_history(session_id, &history)
+            .await
+            .unwrap();
+
+        // 加载
+        let loaded = mem.load_conversation_history(session_id).await.unwrap();
+        assert_eq!(loaded.len(), 4);
+
+        // 验证内容
+        let payload = serde_json::to_string(&loaded[0]).unwrap();
+        assert!(payload.contains("你好"));
+
+        let payload = serde_json::to_string(&loaded[3]).unwrap();
+        assert!(payload.contains("file.txt"));
+    }
+
+    #[tokio::test]
+    async fn load_nonexistent_session_returns_empty() {
+        let mem = create_test_memory().await;
+        let loaded = mem.load_conversation_history("nonexistent").await.unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_overwrites_previous_history() {
+        use crate::providers::{ChatMessage, ConversationMessage};
+
+        let mem = create_test_memory().await;
+        let session_id = "overwrite-test";
+
+        let history1 = vec![ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: "first".to_string(),
+        })];
+        mem.save_conversation_history(session_id, &history1)
+            .await
+            .unwrap();
+
+        let history2 = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: "second".to_string(),
+            }),
+            ConversationMessage::Chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "reply".to_string(),
+            }),
+        ];
+        mem.save_conversation_history(session_id, &history2)
+            .await
+            .unwrap();
+
+        let loaded = mem.load_conversation_history(session_id).await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        let payload = serde_json::to_string(&loaded[0]).unwrap();
+        assert!(payload.contains("second"));
     }
 
     #[tokio::test]

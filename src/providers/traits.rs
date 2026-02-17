@@ -26,7 +26,7 @@ pub struct ChatResponse {
 }
 
 /// 对话消息（支持多轮 tool call 交互）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConversationMessage {
     /// 普通聊天消息（system/user/assistant）
     Chat(ChatMessage),
