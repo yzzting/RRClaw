@@ -59,8 +59,42 @@ impl Agent {
     }
 
     /// 设置对话历史（用于恢复持久化的对话）
+    /// 自动清理开头孤立的 ToolResult，避免 API 报错
     pub fn set_history(&mut self, history: Vec<ConversationMessage>) {
         self.history = history;
+        self.sanitize_history();
+    }
+
+    /// 清理 history 中无效的消息序列
+    /// - 移除开头孤立的 ToolResult（没有对应的 AssistantToolCalls）
+    /// - 移除中间孤立的 ToolResult（前面不是 AssistantToolCalls 或 ToolResult）
+    fn sanitize_history(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        // 逐条检查，保留合法序列
+        let mut cleaned = Vec::with_capacity(self.history.len());
+        for msg in self.history.drain(..) {
+            match &msg {
+                ConversationMessage::ToolResult { .. } => {
+                    // ToolResult 只能出现在 AssistantToolCalls 或另一个 ToolResult 之后
+                    let prev_ok = cleaned.last().map_or(false, |prev| {
+                        matches!(
+                            prev,
+                            ConversationMessage::AssistantToolCalls { .. }
+                                | ConversationMessage::ToolResult { .. }
+                        )
+                    });
+                    if prev_ok {
+                        cleaned.push(msg);
+                    } else {
+                        debug!("清理孤立 ToolResult: {:?}", msg);
+                    }
+                }
+                _ => cleaned.push(msg),
+            }
+        }
+        self.history = cleaned;
     }
 
     /// 处理一条用户消息，返回 AI 最终回复
@@ -90,7 +124,7 @@ impl Agent {
             messages.extend(self.history.clone());
 
             debug!("iteration={}, history_len={}", iteration, self.history.len());
-            trace!("system_prompt:\n{}", system_prompt);
+            debug!("system_prompt:\n{}", system_prompt);
             trace!("messages_to_llm: {:?}", messages);
 
             // 调用 Provider
@@ -207,7 +241,7 @@ impl Agent {
             messages.extend(self.history.clone());
 
             debug!("stream iteration={}, history_len={}", iteration, self.history.len());
-            trace!("system_prompt:\n{}", system_prompt);
+            debug!("system_prompt:\n{}", system_prompt);
             trace!("messages_to_llm: {:?}", messages);
 
             // 发送 Thinking 状态
