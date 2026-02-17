@@ -36,14 +36,20 @@ impl CompatibleProvider {
         for msg in messages {
             match msg {
                 ConversationMessage::Chat(ChatMessage { role, content }) => {
-                    result.push(serde_json::json!({
+                    let mut obj = serde_json::json!({
                         "role": role,
                         "content": content,
-                    }));
+                    });
+                    // DeepSeek Reasoner 要求 assistant 消息包含 reasoning_content
+                    if role == "assistant" {
+                        obj["reasoning_content"] = serde_json::Value::Null;
+                    }
+                    result.push(obj);
                 }
                 ConversationMessage::AssistantToolCalls { text, tool_calls } => {
                     let mut obj = serde_json::json!({
                         "role": "assistant",
+                        "reasoning_content": serde_json::Value::Null,
                     });
                     if let Some(text) = text {
                         obj["content"] = serde_json::Value::String(text.clone());
