@@ -42,14 +42,14 @@ impl CompatibleProvider {
                     });
                     // DeepSeek Reasoner 要求 assistant 消息包含 reasoning_content
                     if role == "assistant" {
-                        obj["reasoning_content"] = serde_json::Value::Null;
+                        obj["reasoning_content"] = serde_json::json!("");
                     }
                     result.push(obj);
                 }
                 ConversationMessage::AssistantToolCalls { text, tool_calls } => {
                     let mut obj = serde_json::json!({
                         "role": "assistant",
-                        "reasoning_content": serde_json::Value::Null,
+                        "reasoning_content": serde_json::json!(""),
                     });
                     if let Some(text) = text {
                         obj["content"] = serde_json::Value::String(text.clone());
