@@ -96,7 +96,7 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
         DefaultPromptSegment::Empty,
     );
 
-    println!("RRClaw AI 助手 (输入 exit 退出, clear 清屏)");
+    println!("RRClaw AI 助手 (输入 /help 查看命令, exit 退出)");
     println!();
 
     loop {
@@ -119,6 +119,12 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
                         continue;
                     }
                     _ => {}
+                }
+
+                // 斜杠命令
+                if let Some(cmd) = input.strip_prefix('/') {
+                    handle_slash_command(cmd, agent, &session_id, memory).await?;
+                    continue;
                 }
 
                 println!();
@@ -154,6 +160,72 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 处理斜杠命令
+async fn handle_slash_command(
+    cmd: &str,
+    agent: &mut Agent,
+    session_id: &str,
+    memory: &SqliteMemory,
+) -> Result<()> {
+    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+    let name = parts[0];
+    let arg = parts.get(1).map(|s| s.trim());
+
+    match name {
+        "help" | "h" => {
+            print_help();
+        }
+        "new" => {
+            // 保存当前对话，然后清空
+            if let Err(e) = memory
+                .save_conversation_history(session_id, agent.history())
+                .await
+            {
+                debug!("保存对话历史失败: {:#}", e);
+            }
+            agent.clear_history();
+            println!("已开始新对话。");
+        }
+        "clear" => {
+            print!("\x1b[2J\x1b[H");
+            let _ = std::io::stdout().flush();
+        }
+        "config" => {
+            println!("当前配置:");
+            println!("  模型: {}", agent.model());
+            println!("  温度: {}", agent.temperature());
+        }
+        "model" => {
+            if let Some(model_name) = arg {
+                agent.set_model(model_name.to_string());
+                println!("模型已切换为: {}", model_name);
+            } else {
+                println!("当前模型: {}", agent.model());
+                println!("用法: /model <model-name>");
+            }
+        }
+        _ => {
+            println!("未知命令: /{}。输入 /help 查看可用命令。", name);
+        }
+    }
+    Ok(())
+}
+
+/// 打印帮助信息
+fn print_help() {
+    println!("可用命令:");
+    println!("  /help, /h       显示此帮助");
+    println!("  /new            新建对话（清空历史）");
+    println!("  /clear          清屏");
+    println!("  /config         显示当前配置");
+    println!("  /model <name>   切换模型");
+    println!();
+    println!("  exit, quit      退出");
+    println!("  clear           清屏");
+    println!();
+    println!("其他输入会发送给 AI 处理。");
 }
 
 /// 流式处理消息并实时打印
