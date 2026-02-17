@@ -67,6 +67,8 @@ pub enum StreamEvent {
         name: String,
         status: ToolStatusKind,
     },
+    /// LLM 思考中（等待首个 token）
+    Thinking,
     /// 流结束，返回完整响应
     Done(ChatResponse),
 }

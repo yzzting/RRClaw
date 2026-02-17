@@ -163,14 +163,47 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
     // 在后台 task 中消费 stream events 并打印
     let print_handle = tokio::spawn(async move {
         let mut has_output = false;
+        // Thinking 动画: 收到 Thinking 后启动，收到首个 Text/ToolStatus/Done 后停止
+        let mut thinking_handle: Option<tokio::task::JoinHandle<()>> = None;
+        let thinking_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
         while let Some(event) = rx.recv().await {
             match event {
+                StreamEvent::Thinking => {
+                    // 启动 thinking 动画
+                    let flag = thinking_flag.clone();
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    thinking_handle = Some(tokio::spawn(async move {
+                        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                        let mut i = 0;
+                        while flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            print!("\r{} 思考中...", frames[i % frames.len()]);
+                            let _ = std::io::stdout().flush();
+                            i += 1;
+                            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                        }
+                    }));
+                }
                 StreamEvent::Text(text) => {
+                    // 停止 thinking 动画
+                    if let Some(handle) = thinking_handle.take() {
+                        thinking_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        let _ = handle.await;
+                        print!("\r\x1b[K"); // 清除 thinking 行
+                        let _ = std::io::stdout().flush();
+                    }
                     print!("{}", text);
                     let _ = std::io::stdout().flush();
                     has_output = true;
                 }
                 StreamEvent::ToolStatus { name, status } => {
+                    // 停止 thinking 动画
+                    if let Some(handle) = thinking_handle.take() {
+                        thinking_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        let _ = handle.await;
+                        print!("\r\x1b[K"); // 清除 thinking 行
+                        let _ = std::io::stdout().flush();
+                    }
                     match &status {
                         ToolStatusKind::Running(cmd) => {
                             print!("\n⏳ {} ...", cmd);
@@ -189,7 +222,13 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                     }
                 }
                 StreamEvent::Done(_) => {
-                    // 流结束
+                    // 停止 thinking 动画
+                    if let Some(handle) = thinking_handle.take() {
+                        thinking_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        let _ = handle.await;
+                        print!("\r\x1b[K");
+                        let _ = std::io::stdout().flush();
+                    }
                 }
                 StreamEvent::ToolCallDelta { .. } => {
                     // tool call 增量不打印给用户

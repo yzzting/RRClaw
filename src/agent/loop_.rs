@@ -1,5 +1,5 @@
 use color_eyre::eyre::Result;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use tokio::sync::mpsc;
 
@@ -90,6 +90,8 @@ impl Agent {
             messages.extend(self.history.clone());
 
             debug!("iteration={}, history_len={}", iteration, self.history.len());
+            trace!("system_prompt:\n{}", system_prompt);
+            trace!("messages_to_llm: {:?}", messages);
 
             // 调用 Provider
             let response = self
@@ -205,6 +207,11 @@ impl Agent {
             messages.extend(self.history.clone());
 
             debug!("stream iteration={}, history_len={}", iteration, self.history.len());
+            trace!("system_prompt:\n{}", system_prompt);
+            trace!("messages_to_llm: {:?}", messages);
+
+            // 发送 Thinking 状态
+            let _ = tx.send(StreamEvent::Thinking).await;
 
             // 流式调用 Provider
             let response = self
