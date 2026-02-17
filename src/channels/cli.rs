@@ -235,6 +235,13 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                 }
             }
         }
+        // channel 关闭后清理残留的 thinking 动画
+        if let Some(handle) = thinking_handle.take() {
+            thinking_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+            let _ = handle.await;
+            print!("\r\x1b[K");
+            let _ = std::io::stdout().flush();
+        }
         has_output
     });
 

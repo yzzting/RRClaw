@@ -415,10 +415,22 @@ impl Agent {
     }
 
     /// 裁剪 history 保持在最大限制内
+    /// 确保裁剪后不会留下孤立的 ToolResult（必须紧跟 AssistantToolCalls）
     fn trim_history(&mut self) {
-        if self.history.len() > MAX_HISTORY_SIZE {
-            let excess = self.history.len() - MAX_HISTORY_SIZE;
-            self.history.drain(..excess);
+        if self.history.len() <= MAX_HISTORY_SIZE {
+            return;
+        }
+        let excess = self.history.len() - MAX_HISTORY_SIZE;
+        self.history.drain(..excess);
+
+        // 跳过开头的孤立 ToolResult（它们的 AssistantToolCalls 已被裁掉）
+        let skip = self
+            .history
+            .iter()
+            .take_while(|msg| matches!(msg, ConversationMessage::ToolResult { .. }))
+            .count();
+        if skip > 0 {
+            self.history.drain(..skip);
         }
     }
 }
