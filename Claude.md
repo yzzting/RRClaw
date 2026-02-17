@@ -231,6 +231,31 @@ pub struct SecurityPolicy {
 
 ---
 
+## 日志系统
+
+双层 tracing 架构，REPL 交互不受干扰，同时保留完整调试日志：
+
+| 层 | 输出目标 | 默认级别 | 用途 |
+|----|----------|----------|------|
+| stderr | 终端 | `warn` | 运行时警告/错误，不干扰 REPL |
+| 文件 | `~/.rrclaw/logs/rrclaw.log.YYYY-MM-DD` | `rrclaw=debug` | API 请求/响应、工具执行、agent loop 流程 |
+
+日志文件按天滚动。可通过 `RUST_LOG` 环境变量覆盖文件日志级别：
+
+```bash
+# 查看完整请求体/响应体（含 API key 注意安全）
+RUST_LOG=rrclaw=trace cargo run -- agent
+
+# 查看日志
+tail -f ~/.rrclaw/logs/rrclaw.log.*
+```
+
+关键日志点：
+- `providers::compatible` — API 请求 URL/model、响应状态（debug），请求体/响应体（trace）
+- `agent::loop_` — 每轮迭代编号、history 长度、响应摘要、工具执行参数和结果
+
+---
+
 ## Agent Loop 流程
 
 ```
@@ -290,7 +315,7 @@ system prompt 按层拼接:
 | `figment` | 配置加载（TOML + 环境变量多层合并） | 0.10 |
 | `color-eyre` + `thiserror` | 错误处理（彩色 span trace，CLI 友好） | latest |
 | `async-trait` | 异步 trait 支持 | 0.1 |
-| `tracing` + `tracing-subscriber` | 日志 | 0.1 |
+| `tracing` + `tracing-subscriber` + `tracing-appender` | 日志（双层：stderr warn + 文件 debug） | 0.1/0.2 |
 | `reedline` | CLI 行编辑器（历史、补全、高亮、vi/emacs） | 0.37 |
 | `directories` | 跨平台配置路径 | 5.x |
 | `chrono` | 时间处理 | 0.4 |
