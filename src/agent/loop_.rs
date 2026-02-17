@@ -85,6 +85,11 @@ impl Agent {
         self.temperature
     }
 
+    /// 获取安全策略引用
+    pub fn policy(&self) -> &SecurityPolicy {
+        &self.policy
+    }
+
     /// 清理 history 中无效的消息序列
     /// - 移除开头孤立的 ToolResult（没有对应的 AssistantToolCalls）
     /// - 移除中间孤立的 ToolResult（前面不是 AssistantToolCalls 或 ToolResult）

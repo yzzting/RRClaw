@@ -193,9 +193,18 @@ async fn handle_slash_command(
             let _ = std::io::stdout().flush();
         }
         "config" => {
+            let policy = agent.policy();
             println!("当前配置:");
             println!("  模型: {}", agent.model());
             println!("  温度: {}", agent.temperature());
+            println!("  安全模式: {:?}", policy.autonomy);
+            println!("  工作目录: {}", policy.workspace_dir.display());
+            println!("  命令白名单: {:?}", policy.allowed_commands);
+            if !policy.blocked_paths.is_empty() {
+                let paths: Vec<String> = policy.blocked_paths.iter()
+                    .map(|p| p.display().to_string()).collect();
+                println!("  禁止路径: {:?}", paths);
+            }
         }
         "model" => {
             if let Some(model_name) = arg {
