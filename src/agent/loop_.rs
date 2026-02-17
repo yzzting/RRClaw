@@ -124,6 +124,18 @@ impl Agent {
                 });
 
             for tc in &response.tool_calls {
+                // 预验证: 在确认前检查安全策略（避免确认后被拒绝）
+                if let Some(tool) = self.tools.iter().find(|t| t.name() == tc.name) {
+                    if let Some(rejection) = tool.pre_validate(&tc.arguments, &self.policy) {
+                        info!("工具预验证失败: {} - {}", tc.name, rejection);
+                        self.history.push(ConversationMessage::ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!("工具执行失败: {}", rejection),
+                        });
+                        continue;
+                    }
+                }
+
                 // Supervised 模式: 执行前需用户确认
                 if self.policy.requires_confirmation() {
                     if let Some(confirm) = &self.confirm_fn {
@@ -226,6 +238,18 @@ impl Agent {
                 });
 
             for tc in &response.tool_calls {
+                // 预验证: 在确认前检查安全策略（避免确认后被拒绝）
+                if let Some(tool) = self.tools.iter().find(|t| t.name() == tc.name) {
+                    if let Some(rejection) = tool.pre_validate(&tc.arguments, &self.policy) {
+                        info!("工具预验证失败: {} - {}", tc.name, rejection);
+                        self.history.push(ConversationMessage::ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!("工具执行失败: {}", rejection),
+                        });
+                        continue;
+                    }
+                }
+
                 // Supervised 模式: 执行前需用户确认
                 if self.policy.requires_confirmation() {
                     if let Some(confirm) = &self.confirm_fn {
@@ -305,7 +329,10 @@ impl Agent {
         // [3] 安全规则
         let security_rules = match self.policy.autonomy {
             AutonomyLevel::ReadOnly => "当前为只读模式，不要尝试执行任何工具。",
-            AutonomyLevel::Supervised => "执行工具前必须向用户展示命令并获得确认。",
+            AutonomyLevel::Supervised => concat!(
+                "当前为 Supervised 模式。你应该直接调用工具，系统会自动弹出确认提示让用户决定是否执行。",
+                "不要在文本中请求用户确认，直接发起 tool call 即可。"
+            ),
             AutonomyLevel::Full => "你可以自主执行工具，但须遵守白名单限制。",
         };
         parts.push(security_rules.to_string());

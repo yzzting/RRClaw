@@ -98,6 +98,13 @@ impl Tool for FileWriteTool {
         })
     }
 
+    fn pre_validate(&self, _args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
+        if !policy.allows_execution() {
+            return Some("当前为只读模式，不允许写入文件".to_string());
+        }
+        None
+    }
+
     async fn execute(
         &self,
         args: serde_json::Value,
@@ -113,7 +120,7 @@ impl Tool for FileWriteTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| color_eyre::eyre::eyre!("缺少 content 参数"))?;
 
-        // 安全检查: ReadOnly 模式拒绝
+        // 安全检查: ReadOnly 模式拒绝（防御性二次检查）
         if !policy.allows_execution() {
             return Ok(ToolResult {
                 success: false,

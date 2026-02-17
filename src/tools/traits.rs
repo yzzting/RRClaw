@@ -21,6 +21,12 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> serde_json::Value;
     async fn execute(&self, args: serde_json::Value, policy: &SecurityPolicy) -> Result<ToolResult>;
 
+    /// 预验证：在 Supervised 确认前检查安全策略
+    /// 返回 None 表示通过，Some(error) 表示拒绝（不会弹出确认提示）
+    fn pre_validate(&self, _args: &serde_json::Value, _policy: &SecurityPolicy) -> Option<String> {
+        None
+    }
+
     /// 生成 ToolSpec 供 Provider 使用
     fn spec(&self) -> ToolSpec {
         ToolSpec {

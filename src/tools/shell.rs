@@ -19,7 +19,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "执行 shell 命令。命令必须在白名单中。"
+        "执行 shell 命令。Supervised 模式下用户确认后可执行任意命令，Full 模式下须在白名单中。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -35,6 +35,23 @@ impl Tool for ShellTool {
         })
     }
 
+    fn pre_validate(&self, args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
+        // ReadOnly 模式: 绝对拒绝
+        if !policy.allows_execution() {
+            return Some("当前为只读模式，不允许执行命令".to_string());
+        }
+        // Full 模式: 白名单是唯一防线（无人工确认）
+        // Supervised 模式: 不在此拦截，由用户确认决定
+        if !policy.requires_confirmation() {
+            if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
+                if !policy.is_command_allowed(command) {
+                    return Some(format!("命令不在白名单中: {}", command));
+                }
+            }
+        }
+        None
+    }
+
     async fn execute(
         &self,
         args: serde_json::Value,
@@ -45,7 +62,7 @@ impl Tool for ShellTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| color_eyre::eyre::eyre!("缺少 command 参数"))?;
 
-        // 安全检查: ReadOnly 模式拒绝
+        // ReadOnly 模式: 绝对拒绝
         if !policy.allows_execution() {
             return Ok(ToolResult {
                 success: false,
@@ -54,8 +71,9 @@ impl Tool for ShellTool {
             });
         }
 
-        // 安全检查: 命令白名单
-        if !policy.is_command_allowed(command) {
+        // Full 模式: 白名单强制检查（无人工确认，这是唯一防线）
+        // Supervised 模式: 用户已通过 [y/N] 确认，跳过白名单
+        if !policy.requires_confirmation() && !policy.is_command_allowed(command) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),

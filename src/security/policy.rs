@@ -23,6 +23,7 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             allowed_commands: vec![
                 "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc",
+                "cargo", "rustc",
             ]
             .into_iter()
             .map(String::from)

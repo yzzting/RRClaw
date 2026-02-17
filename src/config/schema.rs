@@ -84,10 +84,13 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             autonomy: AutonomyLevel::Supervised,
-            allowed_commands: vec!["ls", "cat", "grep", "find", "echo", "pwd", "git"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            allowed_commands: vec![
+                "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc",
+                "cargo", "rustc",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             workspace_only: true,
         }
     }
@@ -117,7 +120,7 @@ auto_save = true
 
 [security]
 autonomy = "supervised"
-allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git"]
+allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc", "cargo", "rustc"]
 workspace_only = true
 "#;
 
@@ -173,6 +176,7 @@ mod tests {
         assert_eq!(config.security.autonomy, AutonomyLevel::Supervised);
         assert!(config.security.workspace_only);
         assert!(config.security.allowed_commands.contains(&"ls".to_string()));
+        assert!(config.security.allowed_commands.contains(&"cargo".to_string()));
     }
 
     #[test]
