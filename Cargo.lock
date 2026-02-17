@@ -1993,6 +1993,7 @@ dependencies = [
  "color-eyre",
  "directories",
  "figment",
+ "futures-util",
  "reedline",
  "reqwest",
  "rusqlite",

@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result};
+use futures_util::StreamExt;
 use serde::Deserialize;
-use tracing::{debug, trace};
+use tokio::sync::mpsc;
+use tracing::{debug, trace, warn};
 
 use crate::config::ProviderConfig;
 
 use super::traits::{
-    ChatMessage, ChatResponse, ConversationMessage, Provider, ToolCall, ToolSpec,
+    ChatMessage, ChatResponse, ConversationMessage, Provider, StreamEvent, ToolCall, ToolSpec,
 };
 
 /// OpenAI 兼容协议 Provider（GLM/MiniMax/DeepSeek/GPT）
@@ -105,6 +107,32 @@ impl CompatibleProvider {
             .collect()
     }
 
+    /// 构造请求体（stream/非stream 共用）
+    fn build_request_body(
+        messages: &[ConversationMessage],
+        tools: &[ToolSpec],
+        model: &str,
+        temperature: f64,
+        stream: bool,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": Self::build_messages(messages),
+            "temperature": temperature,
+        });
+
+        let built_tools = Self::build_tools(tools);
+        if !built_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(built_tools);
+        }
+
+        if stream {
+            body["stream"] = serde_json::json!(true);
+        }
+
+        body
+    }
+
     /// 解析 OpenAI 响应
     fn parse_response(body: &OpenAIResponse) -> ChatResponse {
         let choice = match body.choices.first() {
@@ -147,16 +175,7 @@ impl Provider for CompatibleProvider {
         model: &str,
         temperature: f64,
     ) -> Result<ChatResponse> {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": Self::build_messages(messages),
-            "temperature": temperature,
-        });
-
-        let built_tools = Self::build_tools(tools);
-        if !built_tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(built_tools);
-        }
+        let body = Self::build_request_body(messages, tools, model, temperature, false);
 
         debug!("API 请求: {} model={}", self.endpoint(), model);
         trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
@@ -190,6 +209,160 @@ impl Provider for CompatibleProvider {
 
         Ok(Self::parse_response(&parsed))
     }
+
+    async fn chat_stream(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolSpec],
+        model: &str,
+        temperature: f64,
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> Result<ChatResponse> {
+        let body = Self::build_request_body(messages, tools, model, temperature, true);
+
+        debug!("API 流式请求: {} model={}", self.endpoint(), model);
+        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .wrap_err("发送流式请求失败")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_text = resp.text().await.wrap_err("读取错误响应失败")?;
+            return Err(color_eyre::eyre::eyre!(
+                "API 流式请求失败 ({}): {}",
+                status,
+                err_text
+            ));
+        }
+
+        debug!("API 流式响应状态: {}", status);
+
+        // 累积状态
+        let mut full_text = String::new();
+        // tool_calls 累积: index → (id, name, arguments_buffer)
+        let mut tool_calls_acc: Vec<(String, String, String)> = Vec::new();
+        let mut line_buf = String::new();
+
+        let mut byte_stream = resp.bytes_stream();
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = chunk.wrap_err("读取 SSE 数据块失败")?;
+            let chunk_str = String::from_utf8_lossy(&chunk);
+
+            // SSE 协议: 每行 "data: {...}\n\n"，可能一个 chunk 包含多行
+            line_buf.push_str(&chunk_str);
+
+            // 按行处理
+            while let Some(newline_pos) = line_buf.find('\n') {
+                let line = line_buf[..newline_pos].trim().to_string();
+                line_buf = line_buf[newline_pos + 1..].to_string();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                if line == "data: [DONE]" {
+                    break;
+                }
+
+                let json_str = match line.strip_prefix("data: ") {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let parsed: SSEStreamResponse = match serde_json::from_str(json_str) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("SSE JSON 解析失败: {} line={}", e, json_str);
+                        continue;
+                    }
+                };
+
+                if let Some(choice) = parsed.choices.first() {
+                    // 文本增量
+                    if let Some(content) = &choice.delta.content {
+                        if !content.is_empty() {
+                            full_text.push_str(content);
+                            let _ = tx.send(StreamEvent::Text(content.clone())).await;
+                        }
+                    }
+
+                    // tool call 增量
+                    if let Some(tc_deltas) = &choice.delta.tool_calls {
+                        for tc in tc_deltas {
+                            let idx = tc.index.unwrap_or(0);
+
+                            // 扩展 tool_calls_acc 到足够大小
+                            while tool_calls_acc.len() <= idx {
+                                tool_calls_acc.push((String::new(), String::new(), String::new()));
+                            }
+
+                            if let Some(id) = &tc.id {
+                                tool_calls_acc[idx].0 = id.clone();
+                            }
+                            if let Some(func) = &tc.function {
+                                if let Some(name) = &func.name {
+                                    tool_calls_acc[idx].1 = name.clone();
+                                }
+                                if let Some(args) = &func.arguments {
+                                    tool_calls_acc[idx].2.push_str(args);
+                                    let _ = tx
+                                        .send(StreamEvent::ToolCallDelta {
+                                            index: idx,
+                                            id: tc.id.clone(),
+                                            name: tc
+                                                .function
+                                                .as_ref()
+                                                .and_then(|f| f.name.clone()),
+                                            arguments_delta: args.clone(),
+                                        })
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 组装最终 ChatResponse
+        let tool_calls: Vec<ToolCall> = tool_calls_acc
+            .into_iter()
+            .filter(|(id, name, _)| !id.is_empty() || !name.is_empty())
+            .map(|(id, name, args)| ToolCall {
+                id,
+                name,
+                arguments: serde_json::from_str(&args)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            })
+            .collect();
+
+        let response = ChatResponse {
+            text: if full_text.is_empty() {
+                None
+            } else {
+                Some(full_text)
+            },
+            tool_calls,
+        };
+
+        let _ = tx.send(StreamEvent::Done(response.clone())).await;
+
+        debug!(
+            "流式响应完成: text_len={}, tool_calls={}",
+            response.text.as_ref().map(|t| t.len()).unwrap_or(0),
+            response.tool_calls.len()
+        );
+
+        Ok(response)
+    }
 }
 
 // --- OpenAI 响应结构体（仅用于反序列化）---
@@ -220,6 +393,37 @@ struct OpenAIToolCall {
 struct OpenAIFunction {
     name: String,
     arguments: String,
+}
+
+// --- SSE 流式响应结构体 ---
+
+#[derive(Debug, Deserialize)]
+struct SSEStreamResponse {
+    choices: Vec<SSEStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SSEStreamChoice {
+    delta: SSEDelta,
+}
+
+#[derive(Debug, Deserialize)]
+struct SSEDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<SSEToolCallDelta>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SSEToolCallDelta {
+    index: Option<usize>,
+    id: Option<String>,
+    function: Option<SSEFunctionDelta>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SSEFunctionDelta {
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
 #[cfg(test)]
