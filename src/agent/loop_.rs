@@ -11,6 +11,10 @@ use crate::tools::Tool;
 const MAX_TOOL_ITERATIONS: usize = 10;
 const MAX_HISTORY_SIZE: usize = 50;
 
+/// 工具执行确认回调
+/// 参数: (tool_name, tool_arguments) → 返回 true 表示允许执行
+pub type ConfirmFn = Box<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
+
 /// AI Agent 核心
 pub struct Agent {
     provider: Box<dyn Provider>,
@@ -20,6 +24,7 @@ pub struct Agent {
     model: String,
     temperature: f64,
     history: Vec<ConversationMessage>,
+    confirm_fn: Option<ConfirmFn>,
 }
 
 impl Agent {
@@ -39,7 +44,13 @@ impl Agent {
             model,
             temperature,
             history: Vec::new(),
+            confirm_fn: None,
         }
+    }
+
+    /// 设置工具执行确认回调（用于 Supervised 模式）
+    pub fn set_confirm_fn(&mut self, f: ConfirmFn) {
+        self.confirm_fn = Some(f);
     }
 
     /// 处理一条用户消息，返回 AI 最终回复
@@ -103,6 +114,20 @@ impl Agent {
                 });
 
             for tc in &response.tool_calls {
+                // Supervised 模式: 执行前需用户确认
+                if self.policy.requires_confirmation() {
+                    if let Some(confirm) = &self.confirm_fn {
+                        if !confirm(&tc.name, &tc.arguments) {
+                            info!("用户拒绝执行工具: {}", tc.name);
+                            self.history.push(ConversationMessage::ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: "用户拒绝执行该工具".to_string(),
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
@@ -191,6 +216,20 @@ impl Agent {
                 });
 
             for tc in &response.tool_calls {
+                // Supervised 模式: 执行前需用户确认
+                if self.policy.requires_confirmation() {
+                    if let Some(confirm) = &self.confirm_fn {
+                        if !confirm(&tc.name, &tc.arguments) {
+                            info!("用户拒绝执行工具: {}", tc.name);
+                            self.history.push(ConversationMessage::ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: "用户拒绝执行该工具".to_string(),
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
@@ -520,6 +559,129 @@ mod tests {
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("shell"));
+    }
+
+    #[tokio::test]
+    async fn supervised_confirm_allows_execution() {
+        let provider = MockProvider::new(vec![
+            ChatResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+            ChatResponse {
+                text: Some("执行完成".to_string()),
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mock_tool = MockTool {
+            tool_name: "shell".to_string(),
+            result: "file.txt".to_string(),
+        };
+
+        let mut policy = test_policy();
+        policy.autonomy = AutonomyLevel::Supervised;
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(mock_tool)],
+            Box::new(MockMemory),
+            policy,
+            "test-model".to_string(),
+            0.7,
+        );
+
+        // 确认回调: 始终允许
+        agent.set_confirm_fn(Box::new(|_name, _args| true));
+
+        let reply = agent.process_message("列出文件").await.unwrap();
+        assert_eq!(reply, "执行完成");
+    }
+
+    #[tokio::test]
+    async fn supervised_confirm_denies_execution() {
+        let provider = MockProvider::new(vec![
+            ChatResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "rm -rf /"}),
+                }],
+            },
+            ChatResponse {
+                text: Some("好的，已取消".to_string()),
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mock_tool = MockTool {
+            tool_name: "shell".to_string(),
+            result: "should not run".to_string(),
+        };
+
+        let mut policy = test_policy();
+        policy.autonomy = AutonomyLevel::Supervised;
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(mock_tool)],
+            Box::new(MockMemory),
+            policy,
+            "test-model".to_string(),
+            0.7,
+        );
+
+        // 确认回调: 始终拒绝
+        agent.set_confirm_fn(Box::new(|_name, _args| false));
+
+        let reply = agent.process_message("删除所有文件").await.unwrap();
+        assert_eq!(reply, "好的，已取消");
+    }
+
+    #[tokio::test]
+    async fn full_mode_skips_confirmation() {
+        let provider = MockProvider::new(vec![
+            ChatResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+            ChatResponse {
+                text: Some("完成".to_string()),
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mock_tool = MockTool {
+            tool_name: "shell".to_string(),
+            result: "file.txt".to_string(),
+        };
+
+        // Full 模式 — 不需要确认
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(mock_tool)],
+            Box::new(MockMemory),
+            test_policy(), // Full mode
+            "test-model".to_string(),
+            0.7,
+        );
+
+        // 设置一个会 panic 的确认回调（不应被调用）
+        agent.set_confirm_fn(Box::new(|_name, _args| {
+            panic!("Full 模式不应调用确认回调");
+        }));
+
+        let reply = agent.process_message("列出文件").await.unwrap();
+        assert_eq!(reply, "完成");
     }
 
     #[test]

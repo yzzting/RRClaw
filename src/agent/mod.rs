@@ -1,3 +1,3 @@
 pub mod loop_;
 
-pub use loop_::Agent;
+pub use loop_::{Agent, ConfirmFn};
