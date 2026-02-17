@@ -27,6 +27,8 @@ enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
+    /// 启动 Telegram Bot
+    Telegram,
     /// 交互式配置向导
     Setup,
     /// 初始化配置文件
@@ -48,6 +50,7 @@ async fn main() -> Result<()> {
             provider,
             model,
         } => run_agent(message, provider, model).await?,
+        Commands::Telegram => run_telegram().await?,
         Commands::Setup => rrclaw::config::run_setup()?,
         Commands::Init => run_init()?,
         Commands::Config => run_config()?,
@@ -122,6 +125,19 @@ async fn run_agent(
     }
 
     Ok(())
+}
+
+async fn run_telegram() -> Result<()> {
+    let config = rrclaw::config::Config::load_or_init()
+        .wrap_err("加载配置失败")?;
+
+    let data_dir = data_dir()?;
+    let memory = Arc::new(
+        rrclaw::memory::SqliteMemory::open(&data_dir)
+            .wrap_err("初始化 Memory 失败")?,
+    );
+
+    rrclaw::channels::telegram::run_telegram(config, memory).await
 }
 
 fn run_init() -> Result<()> {
