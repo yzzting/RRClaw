@@ -446,13 +446,22 @@ impl Agent {
             parts.push(memory_section);
         }
 
-        // [5] 环境信息
+        // [5] 环境信息 + 安全策略详情
         let workspace = self.policy.workspace_dir.display();
-        parts.push(format!(
-            "工作目录: {}\n当前时间: {}",
+        let whitelist = self.policy.allowed_commands.join(", ");
+        let mut env_info = format!(
+            "工作目录: {}\n当前时间: {}\nShell 命令白名单: [{}]",
             workspace,
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-        ));
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            whitelist,
+        );
+        if !self.policy.blocked_paths.is_empty() {
+            let blocked: Vec<String> = self.policy.blocked_paths.iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            env_info.push_str(&format!("\n禁止访问路径: [{}]", blocked.join(", ")));
+        }
+        parts.push(env_info);
 
         // [6] 工具结果格式说明（让 LLM 理解并兜底）
         parts.push(concat!(
