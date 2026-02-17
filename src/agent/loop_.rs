@@ -53,6 +53,16 @@ impl Agent {
         self.confirm_fn = Some(f);
     }
 
+    /// 获取当前对话历史（用于持久化）
+    pub fn history(&self) -> &[ConversationMessage] {
+        &self.history
+    }
+
+    /// 设置对话历史（用于恢复持久化的对话）
+    pub fn set_history(&mut self, history: Vec<ConversationMessage>) {
+        self.history = history;
+    }
+
     /// 处理一条用户消息，返回 AI 最终回复
     pub async fn process_message(&mut self, user_msg: &str) -> Result<String> {
         // 1. Memory recall
