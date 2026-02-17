@@ -298,6 +298,8 @@ impl Agent {
 
             // 有 tool calls — 先停止 thinking spinner（避免和确认提示冲突）
             let _ = tx.send(StreamEvent::Done(response.clone())).await;
+            // 等待 print_handle 处理 Done 事件（清理 spinner），避免和确认提示竞争
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             // 有 tool calls — tool call 阶段不流式输出文本给用户
             self.history
