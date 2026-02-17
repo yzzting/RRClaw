@@ -39,23 +39,62 @@ pub struct Agent {
 3. 安全规则（按 AutonomyLevel）
 4. 记忆上下文（Memory recall 结果）
 5. 环境信息
+6. 工具结果格式说明 + 工具使用规则（LLM 兜底指南）
+
+## 工具执行健壮性：代码 vs LLM 职责边界
+
+**代码层负责**：不丢数据 + 安全 + 基础设施
+**LLM 层负责**：理解结果 + 错误恢复 + 向用户解释
+
+### execute_tool() 结果格式
+
+| 状态 | 格式 | 说明 |
+|------|------|------|
+| 成功 | 直接返回输出内容 | 无前缀 |
+| 失败 | `[失败] {error}` | 可能包含 `[部分输出]` 段 |
+| 错误 | `[错误] {message}` | 系统级异常 |
+
+关键设计：失败时保留 output（部分输出），不丢弃信息。LLM 通过 system prompt 中的 `[工具使用规则]` 学习如何处理各种结果。
+
+### ToolStatus 流式事件
+
+工具执行过程中向 TUI 发送实时状态：
+- `Running(cmd)` — 开始执行
+- `Success(summary)` — 成功，显示首行预览
+- `Failed(err)` — 失败，显示前 3 行错误详情
+
+### Supervised 模式确认流程
+
+```
+pre_validate() → 确认提示 [y/N/a] → execute()
+                  ↑ 会话级自动批准（a 选项）
+```
+
+- `pre_validate()` 在确认前检查安全策略（ReadOnly 拒绝、Full 模式白名单）
+- Supervised 模式用户确认即放行，不受白名单限制
+- 会话级自动批准：按基础命令名跟踪（如 `cargo`），同一 session 内不重复询问
 
 ## 约束
 
 - 最大 tool call 迭代: 10 次/轮
 - History 保留: 最近 50 条消息
 - Supervised 模式: tool 执行前需要确认（返回确认信息，由 Channel 层处理）
+- shell 超时: 120 秒
 
 ## 接口
 
 ```rust
 impl Agent {
     pub fn new(...) -> Self;
+    pub fn set_confirm_fn(&mut self, f: ConfirmFn);
     pub async fn process_message(&mut self, user_msg: &str) -> Result<String>;
+    pub async fn process_message_stream(&mut self, user_msg: &str, tx: Sender<StreamEvent>) -> Result<String>;
+    pub fn history(&self) -> &[ConversationMessage];
+    pub fn set_history(&mut self, history: Vec<ConversationMessage>);
 }
 ```
 
-`process_message` 是核心入口，返回 AI 最终回复文本。
+`process_message` 是核心入口，`process_message_stream` 是流式版本（支持 ToolStatus 事件）。
 
 ## 文件结构
 

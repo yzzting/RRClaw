@@ -173,14 +173,18 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                 StreamEvent::ToolStatus { name, status } => {
                     match &status {
                         ToolStatusKind::Running(cmd) => {
-                            print!("\n⏳ 执行 {} ...", cmd);
+                            print!("\n⏳ {} ...", cmd);
                             let _ = std::io::stdout().flush();
                         }
                         ToolStatusKind::Success(summary) => {
                             println!(" ✓ {}", summary);
                         }
                         ToolStatusKind::Failed(err) => {
-                            println!(" ✗ {}: {}", name, err);
+                            println!(" ✗ {} 失败", name);
+                            // 显示前几行错误详情
+                            for line in err.lines().take(3) {
+                                println!("    {}", line);
+                            }
                         }
                     }
                 }

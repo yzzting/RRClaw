@@ -130,7 +130,7 @@ impl Agent {
                         info!("工具预验证失败: {} - {}", tc.name, rejection);
                         self.history.push(ConversationMessage::ToolResult {
                             tool_call_id: tc.id.clone(),
-                            content: format!("工具执行失败: {}", rejection),
+                            content: format!("[失败] {}", rejection),
                         });
                         continue;
                     }
@@ -244,7 +244,7 @@ impl Agent {
                         info!("工具预验证失败: {} - {}", tc.name, rejection);
                         self.history.push(ConversationMessage::ToolResult {
                             tool_call_id: tc.id.clone(),
-                            content: format!("工具执行失败: {}", rejection),
+                            content: format!("[失败] {}", rejection),
                         });
                         continue;
                     }
@@ -280,13 +280,20 @@ impl Agent {
                 debug!("工具结果: {}", truncate_str(&result, 200));
 
                 // 发送执行结果状态
-                if result.starts_with("工具执行失败") || result.starts_with("工具执行错误") || result.starts_with("未知工具") {
+                if result.starts_with("[失败]") || result.starts_with("[错误]") {
                     let _ = tx.send(StreamEvent::ToolStatus {
                         name: tc.name.clone(),
-                        status: ToolStatusKind::Failed(truncate_str(&result, 100)),
+                        status: ToolStatusKind::Failed(truncate_str(&result, 200)),
                     }).await;
                 } else {
-                    let summary = format!("完成 ({}字节)", result.len());
+                    // 成功时显示首行预览
+                    let summary = if result.len() > 80 {
+                        let first_line = result.lines().next().unwrap_or("");
+                        let preview = truncate_str(first_line, 60);
+                        format!("{} (共{}字节)", preview, result.len())
+                    } else {
+                        truncate_str(&result, 80)
+                    };
                     let _ = tx.send(StreamEvent::ToolStatus {
                         name: tc.name.clone(),
                         status: ToolStatusKind::Success(summary),
@@ -318,7 +325,7 @@ impl Agent {
     async fn execute_tool(&self, name: &str, args: serde_json::Value) -> String {
         let tool = match self.tools.iter().find(|t| t.name() == name) {
             Some(t) => t,
-            None => return format!("未知工具: {}", name),
+            None => return format!("[错误] 未知工具: {}", name),
         };
 
         match tool.execute(args, &self.policy).await {
@@ -326,13 +333,16 @@ impl Agent {
                 if result.success {
                     result.output
                 } else {
-                    format!(
-                        "工具执行失败: {}",
-                        result.error.unwrap_or_else(|| "未知错误".to_string())
-                    )
+                    // 保留 output + error，让 LLM 自己判断
+                    let error = result.error.unwrap_or_else(|| "未知错误".to_string());
+                    if result.output.is_empty() {
+                        format!("[失败] {}", error)
+                    } else {
+                        format!("[失败] {}\n[部分输出]\n{}", error, result.output)
+                    }
                 }
             }
-            Err(e) => format!("工具执行错误: {}", e),
+            Err(e) => format!("[错误] {}", e),
         }
     }
 
@@ -379,6 +389,20 @@ impl Agent {
             workspace,
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
         ));
+
+        // [6] 工具结果格式说明（让 LLM 理解并兜底）
+        parts.push(concat!(
+            "[工具结果格式]\n",
+            "- 成功: 直接返回工具输出内容\n",
+            "- 失败: 以 [失败] 开头，可能包含 [部分输出] 段\n",
+            "- 错误: 以 [错误] 开头，表示系统级异常\n",
+            "\n",
+            "[工具使用规则]\n",
+            "- 命令超时不要盲目重试，先告知用户\n",
+            "- 失败时分析 [部分输出] 定位问题，而不是重试相同命令\n",
+            "- 一个目标最多尝试 3 种不同方式，之后向用户说明情况\n",
+            "- file_read 返回空字符串表示文件为空，不是错误",
+        ).to_string());
 
         parts.join("\n\n")
     }

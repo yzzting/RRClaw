@@ -225,9 +225,15 @@ pub struct SecurityPolicy {
 ```
 
 安全检查:
-- `is_command_allowed()` — 检查命令是否在白名单中
+- `is_command_allowed()` — 检查命令是否在白名单中（仅 Full 模式强制）
 - `is_path_allowed()` — 规范化路径 + workspace 范围检查 + symlink 防逃逸
 - `requires_confirmation()` — Supervised 模式下返回 true
+- `pre_validate()` — 工具执行前预检（在用户确认前调用，避免确认后被拒绝）
+
+Supervised 模式安全策略:
+- 用户确认 = 放行，不受白名单限制（用户是最终安全决策者）
+- 支持会话级自动批准: `[y/N/a]` 中选 `a` 后同类命令自动放行
+- Shell 按基础命令名跟踪（如 `cargo test`/`cargo build` 共享 `cargo` 批准）
 
 ---
 
@@ -287,7 +293,7 @@ system prompt 按层拼接:
 
 [3] 安全规则
     当前 AutonomyLevel 下的行为约束:
-    - Supervised: "执行工具前必须向用户展示命令并获得确认"
+    - Supervised: "直接调用工具，系统会自动弹出确认提示"
     - ReadOnly: "不要尝试执行任何工具"
     - Full: "你可以自主执行工具，但须遵守白名单限制"
 
@@ -296,7 +302,11 @@ system prompt 按层拼接:
     "[相关记忆]\n- {entry1.content}\n- {entry2.content}\n..."
 
 [5] 当前环境信息
-    - 工作目录、当前时间、OS 信息
+    - 工作目录、当前时间
+
+[6] 工具结果格式 + 使用规则（LLM 兜底指南）
+    - 成功/失败/错误的格式说明
+    - 超时不盲目重试、分析部分输出、最多 3 种方式尝试
 ```
 
 ---
@@ -413,7 +423,7 @@ auto_save = true
 
 [security]
 autonomy = "supervised"
-allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git"]
+allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc", "cargo", "rustc"]
 workspace_only = true
 ```
 
