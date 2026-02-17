@@ -68,7 +68,7 @@ pub fn run_setup() -> Result<()> {
     let autonomy_options = ["supervised (需确认后执行)", "full (自主执行)", "readonly (只读)"];
     let autonomy_idx = Select::new()
         .with_prompt("安全模式")
-        .items(&autonomy_options)
+        .items(autonomy_options)
         .default(0)
         .interact()
         .wrap_err("选择安全模式失败")?;

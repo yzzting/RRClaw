@@ -74,7 +74,7 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
                     _ => {}
                 }
 
-                print!("\n");
+                println!();
                 if let Err(e) = stream_message(agent, input).await {
                     eprintln!("错误: {:#}\n", e);
                 }

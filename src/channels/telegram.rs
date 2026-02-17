@@ -1,16 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::Result;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::agent::Agent;
-use crate::config::{Config, TelegramConfig};
+use crate::config::Config;
 use crate::memory::SqliteMemory;
-use crate::providers::ToolSpec;
 use crate::security::SecurityPolicy;
 
 /// Agent 工厂: 为每个 chat 创建独立的 Agent
@@ -94,14 +92,14 @@ pub async fn run_telegram(config: Config, memory: Arc<SqliteMemory>) -> Result<(
 
             // 获取或创建该 chat 的 Agent
             let mut agents_map = agents.lock().await;
-            if !agents_map.contains_key(&chat_id) {
+            if let std::collections::hash_map::Entry::Vacant(e) = agents_map.entry(chat_id) {
                 match factory.create_agent() {
                     Ok(agent) => {
-                        agents_map.insert(chat_id, agent);
+                        e.insert(agent);
                     }
-                    Err(e) => {
-                        warn!("创建 Agent 失败: {:#}", e);
-                        bot.send_message(chat_id, format!("Agent 创建失败: {}", e))
+                    Err(err) => {
+                        warn!("创建 Agent 失败: {:#}", err);
+                        bot.send_message(chat_id, format!("Agent 创建失败: {}", err))
                             .await?;
                         return Ok(());
                     }
