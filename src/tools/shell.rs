@@ -10,7 +10,7 @@ use super::traits::{Tool, ToolResult};
 /// Shell 命令执行工具
 pub struct ShellTool;
 
-const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
+const SHELL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[async_trait]
 impl Tool for ShellTool {
@@ -98,14 +98,18 @@ impl Tool for ShellTool {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
                 if output.status.success() {
+                    // 合并 stdout + stderr（cargo 等工具将编译信息输出到 stderr）
+                    let combined = if stderr.is_empty() {
+                        stdout
+                    } else if stdout.is_empty() {
+                        stderr
+                    } else {
+                        format!("{}\n[stderr]\n{}", stdout, stderr)
+                    };
                     Ok(ToolResult {
                         success: true,
-                        output: stdout,
-                        error: if stderr.is_empty() {
-                            None
-                        } else {
-                            Some(stderr)
-                        },
+                        output: combined,
+                        error: None,
                     })
                 } else {
                     Ok(ToolResult {

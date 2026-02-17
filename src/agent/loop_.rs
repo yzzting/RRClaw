@@ -4,7 +4,7 @@ use tracing::{debug, info, warn};
 use tokio::sync::mpsc;
 
 use crate::memory::{Memory, MemoryCategory};
-use crate::providers::{ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec};
+use crate::providers::{ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec, ToolStatusKind};
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use crate::tools::Tool;
 
@@ -264,9 +264,35 @@ impl Agent {
                     }
                 }
 
+                // 发送执行状态
+                let cmd_summary = if tc.name == "shell" {
+                    tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or(&tc.name).to_string()
+                } else {
+                    tc.name.clone()
+                };
+                let _ = tx.send(StreamEvent::ToolStatus {
+                    name: tc.name.clone(),
+                    status: ToolStatusKind::Running(cmd_summary.clone()),
+                }).await;
+
                 info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
+
+                // 发送执行结果状态
+                if result.starts_with("工具执行失败") || result.starts_with("工具执行错误") || result.starts_with("未知工具") {
+                    let _ = tx.send(StreamEvent::ToolStatus {
+                        name: tc.name.clone(),
+                        status: ToolStatusKind::Failed(truncate_str(&result, 100)),
+                    }).await;
+                } else {
+                    let summary = format!("完成 ({}字节)", result.len());
+                    let _ = tx.send(StreamEvent::ToolStatus {
+                        name: tc.name.clone(),
+                        status: ToolStatusKind::Success(summary),
+                    }).await;
+                }
+
                 self.history.push(ConversationMessage::ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: result,

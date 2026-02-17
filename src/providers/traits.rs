@@ -62,8 +62,24 @@ pub enum StreamEvent {
         name: Option<String>,
         arguments_delta: String,
     },
+    /// 工具执行状态（用于 TUI 显示）
+    ToolStatus {
+        name: String,
+        status: ToolStatusKind,
+    },
     /// 流结束，返回完整响应
     Done(ChatResponse),
+}
+
+/// 工具执行状态类型
+#[derive(Debug, Clone)]
+pub enum ToolStatusKind {
+    /// 开始执行
+    Running(String),
+    /// 执行成功（摘要）
+    Success(String),
+    /// 执行失败（错误信息）
+    Failed(String),
 }
 
 /// AI 模型抽象

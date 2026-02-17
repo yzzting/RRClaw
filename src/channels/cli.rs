@@ -8,7 +8,7 @@ use tracing::{debug, info};
 
 use crate::agent::Agent;
 use crate::memory::SqliteMemory;
-use crate::providers::StreamEvent;
+use crate::providers::{StreamEvent, ToolStatusKind};
 
 /// 当天日期作为 session ID
 fn today_session_id() -> String {
@@ -169,6 +169,20 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                     print!("{}", text);
                     let _ = std::io::stdout().flush();
                     has_output = true;
+                }
+                StreamEvent::ToolStatus { name, status } => {
+                    match &status {
+                        ToolStatusKind::Running(cmd) => {
+                            print!("\n⏳ 执行 {} ...", cmd);
+                            let _ = std::io::stdout().flush();
+                        }
+                        ToolStatusKind::Success(summary) => {
+                            println!(" ✓ {}", summary);
+                        }
+                        ToolStatusKind::Failed(err) => {
+                            println!(" ✗ {}: {}", name, err);
+                        }
+                    }
                 }
                 StreamEvent::Done(_) => {
                     // 流结束

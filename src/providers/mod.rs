@@ -4,6 +4,7 @@ pub mod traits;
 
 pub use traits::{
     ChatMessage, ChatResponse, ConversationMessage, Provider, StreamEvent, ToolCall, ToolSpec,
+    ToolStatusKind,
 };
 
 use crate::config::ProviderConfig;
