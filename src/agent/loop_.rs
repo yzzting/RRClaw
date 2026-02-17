@@ -271,6 +271,9 @@ impl Agent {
                 break;
             }
 
+            // 有 tool calls — 先停止 thinking spinner（避免和确认提示冲突）
+            let _ = tx.send(StreamEvent::Done(response.clone())).await;
+
             // 有 tool calls — tool call 阶段不流式输出文本给用户
             self.history
                 .push(ConversationMessage::AssistantToolCalls {
