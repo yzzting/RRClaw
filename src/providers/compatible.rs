@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result};
 use serde::Deserialize;
+use tracing::{debug, trace};
 
 use crate::config::ProviderConfig;
 
@@ -157,6 +158,9 @@ impl Provider for CompatibleProvider {
             body["tools"] = serde_json::Value::Array(built_tools);
         }
 
+        debug!("API 请求: {} model={}", self.endpoint(), model);
+        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+
         let resp = self
             .client
             .post(self.endpoint())
@@ -169,6 +173,9 @@ impl Provider for CompatibleProvider {
 
         let status = resp.status();
         let resp_text = resp.text().await.wrap_err("读取响应失败")?;
+
+        debug!("API 响应状态: {}", status);
+        trace!("响应体: {}", resp_text);
 
         if !status.is_success() {
             return Err(color_eyre::eyre::eyre!(

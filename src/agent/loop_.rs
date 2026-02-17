@@ -1,4 +1,5 @@
 use color_eyre::eyre::Result;
+use tracing::{debug, info, warn};
 
 use crate::memory::{Memory, MemoryCategory};
 use crate::providers::{ChatMessage, ConversationMessage, Provider, ToolSpec};
@@ -57,7 +58,7 @@ impl Agent {
         let tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
         let mut final_text = String::new();
 
-        for _ in 0..MAX_TOOL_ITERATIONS {
+        for iteration in 0..MAX_TOOL_ITERATIONS {
             // 构造消息列表：system + history
             let mut messages = vec![ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
@@ -65,15 +66,26 @@ impl Agent {
             })];
             messages.extend(self.history.clone());
 
+            debug!("iteration={}, history_len={}", iteration, self.history.len());
+
             // 调用 Provider
             let response = self
                 .provider
                 .chat_with_tools(&messages, &tool_specs, &self.model, self.temperature)
                 .await?;
 
+            debug!(
+                "response: text={:?}, tool_calls_count={}",
+                response.text.as_deref().map(|t| truncate_str(t, 100)),
+                response.tool_calls.len()
+            );
+
             if response.tool_calls.is_empty() {
                 // 无 tool calls — 最终回复
                 final_text = response.text.unwrap_or_default();
+                if final_text.is_empty() {
+                    warn!("模型返回空文本回复");
+                }
                 self.history.push(ConversationMessage::Chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: final_text.clone(),
@@ -89,7 +101,9 @@ impl Agent {
                 });
 
             for tc in &response.tool_calls {
+                info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
+                debug!("工具结果: {}", truncate_str(&result, 200));
                 self.history.push(ConversationMessage::ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: result,
@@ -184,6 +198,19 @@ impl Agent {
             self.history.drain(..excess);
         }
     }
+}
+
+/// UTF-8 安全的字符串截断
+fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    // 找到不超过 max_bytes 的最近 char boundary
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...(共{}字节)", &s[..end], s.len())
 }
 
 #[cfg(test)]

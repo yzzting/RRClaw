@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use std::path::PathBuf;
+use tracing_subscriber::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "rrclaw", about = "安全优先的 AI 助手", version)]
@@ -34,12 +35,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+    init_tracing()?;
 
     let cli = Cli::parse();
 
@@ -158,4 +154,40 @@ fn data_dir() -> Result<PathBuf> {
     let base_dirs = directories::BaseDirs::new()
         .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
     Ok(base_dirs.home_dir().join(".rrclaw").join("data"))
+}
+
+/// 获取日志目录: ~/.rrclaw/logs/
+fn log_dir() -> Result<PathBuf> {
+    let base_dirs = directories::BaseDirs::new()
+        .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
+    Ok(base_dirs.home_dir().join(".rrclaw").join("logs"))
+}
+
+/// 初始化 tracing: stderr 只输出 warn+，日志文件输出 debug+
+fn init_tracing() -> Result<()> {
+    let log_dir = log_dir()?;
+    std::fs::create_dir_all(&log_dir)
+        .wrap_err_with(|| format!("创建日志目录失败: {}", log_dir.display()))?;
+
+    // 文件日志: 按天滚动，debug 级别
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "rrclaw.log");
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_ansi(false)
+        .with_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("rrclaw=debug")),
+        );
+
+    // stderr: 只输出 warn+（不干扰 REPL 交互）
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(tracing_subscriber::EnvFilter::new("warn"));
+
+    tracing_subscriber::registry()
+        .with(file_layer)
+        .with(stderr_layer)
+        .init();
+
+    Ok(())
 }
