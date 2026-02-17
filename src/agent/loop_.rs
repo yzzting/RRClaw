@@ -1,8 +1,10 @@
 use color_eyre::eyre::Result;
 use tracing::{debug, info, warn};
 
+use tokio::sync::mpsc;
+
 use crate::memory::{Memory, MemoryCategory};
-use crate::providers::{ChatMessage, ConversationMessage, Provider, ToolSpec};
+use crate::providers::{ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec};
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use crate::tools::Tool;
 
@@ -112,6 +114,94 @@ impl Agent {
         }
 
         // 5. Memory store — 保存对话摘要
+        let summary = format!("User: {}\nAssistant: {}", user_msg, final_text);
+        let key = format!("conv_{}", chrono::Utc::now().timestamp_millis());
+        let _ = self
+            .memory
+            .store(&key, &summary, MemoryCategory::Conversation)
+            .await;
+
+        // 6. 裁剪 history
+        self.trim_history();
+
+        Ok(final_text)
+    }
+
+    /// 处理一条用户消息（流式版本）
+    /// 文本 token 通过 tx 实时发送给调用方，最终返回完整文本
+    pub async fn process_message_stream(
+        &mut self,
+        user_msg: &str,
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> Result<String> {
+        // 1. Memory recall
+        let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
+
+        // 2. 构造 system prompt
+        let system_prompt = self.build_system_prompt(&memories);
+
+        // 3. 添加用户消息到 history
+        self.history.push(ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: user_msg.to_string(),
+        }));
+
+        // 4. Tool call 循环
+        let tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
+        let mut final_text = String::new();
+
+        for iteration in 0..MAX_TOOL_ITERATIONS {
+            let mut messages = vec![ConversationMessage::Chat(ChatMessage {
+                role: "system".to_string(),
+                content: system_prompt.clone(),
+            })];
+            messages.extend(self.history.clone());
+
+            debug!("stream iteration={}, history_len={}", iteration, self.history.len());
+
+            // 流式调用 Provider
+            let response = self
+                .provider
+                .chat_stream(&messages, &tool_specs, &self.model, self.temperature, tx.clone())
+                .await?;
+
+            debug!(
+                "stream response: text={:?}, tool_calls_count={}",
+                response.text.as_deref().map(|t| truncate_str(t, 100)),
+                response.tool_calls.len()
+            );
+
+            if response.tool_calls.is_empty() {
+                final_text = response.text.unwrap_or_default();
+                if final_text.is_empty() {
+                    warn!("流式: 模型返回空文本回复");
+                }
+                self.history.push(ConversationMessage::Chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: final_text.clone(),
+                }));
+                break;
+            }
+
+            // 有 tool calls — tool call 阶段不流式输出文本给用户
+            self.history
+                .push(ConversationMessage::AssistantToolCalls {
+                    text: response.text.clone(),
+                    tool_calls: response.tool_calls.clone(),
+                });
+
+            for tc in &response.tool_calls {
+                info!("执行工具: {} args={}", tc.name, tc.arguments);
+                let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
+                debug!("工具结果: {}", truncate_str(&result, 200));
+                self.history.push(ConversationMessage::ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: result,
+                });
+            }
+        }
+
+        // 5. Memory store
         let summary = format!("User: {}\nAssistant: {}", user_msg, final_text);
         let key = format!("conv_{}", chrono::Utc::now().timestamp_millis());
         let _ = self
