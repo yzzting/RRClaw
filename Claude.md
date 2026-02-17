@@ -431,6 +431,18 @@ workspace_only = true
 
 ## 开发规范
 
+### 计划先行（强制）
+**任何非 trivial 的功能开发，必须先写计划文档让用户审核，审核通过后再动代码。**
+
+流程：
+1. **写计划文档** — 在 `docs/` 下创建计划 markdown（如 `docs/p2-xxx.md`），包含：改动范围、设计方案、提交策略、验证方式
+2. **提交计划文档** — `git commit` 计划文档
+3. **等用户审核** — 明确告知用户"计划已写好，请审核"，等用户确认后再继续
+4. **按计划实现** — 写测试 → 改代码 → 跑通测试 → 提交
+5. **每完成一个原子步骤就提交** — 不要攒一堆改动最后才提交
+
+什么算 trivial：单文件的小 bug fix、clippy 修复、文档 typo。其他都需要计划。
+
 ### 文档驱动开发
 - 根目录 `Claude.md` 作为总架构文档
 - 每个功能目录 `src/<module>/Claude.md` 作为子模块需求/设计文档
@@ -446,6 +458,7 @@ workspace_only = true
 - 最小化提交：尽量小的变更集
 - 提交顺序：docs → trait → impl → test → fix/refactor
 - 提交模版：feat，chore，docs，fix，refactor，test，使用英文 commit message
+- **每完成一个原子步骤就立即提交，不要攒改动**
 
 ### Session 切换协议
 当上下文即将满（>85%）时执行：
