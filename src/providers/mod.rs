@@ -3,7 +3,7 @@ pub mod compatible;
 pub mod traits;
 
 pub use traits::{
-    ChatMessage, ChatResponse, ConversationMessage, Provider, ToolCall, ToolSpec,
+    ChatMessage, ChatResponse, ConversationMessage, Provider, StreamEvent, ToolCall, ToolSpec,
 };
 
 use crate::config::ProviderConfig;
