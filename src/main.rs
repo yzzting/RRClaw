@@ -27,6 +27,8 @@ enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
+    /// 交互式配置向导
+    Setup,
     /// 初始化配置文件
     Init,
     /// 显示当前配置
@@ -46,6 +48,7 @@ async fn main() -> Result<()> {
             provider,
             model,
         } => run_agent(message, provider, model).await?,
+        Commands::Setup => rrclaw::config::run_setup()?,
         Commands::Init => run_init()?,
         Commands::Config => run_config()?,
     }
