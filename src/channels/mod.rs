@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod telegram;
 
 use serde::{Deserialize, Serialize};
 
