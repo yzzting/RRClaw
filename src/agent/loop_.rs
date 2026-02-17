@@ -65,6 +65,26 @@ impl Agent {
         self.sanitize_history();
     }
 
+    /// 清空对话历史（/new 命令用）
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// 获取当前模型名
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// 运行时切换模型
+    pub fn set_model(&mut self, model: String) {
+        self.model = model;
+    }
+
+    /// 获取当前温度
+    pub fn temperature(&self) -> f64 {
+        self.temperature
+    }
+
     /// 清理 history 中无效的消息序列
     /// - 移除开头孤立的 ToolResult（没有对应的 AssistantToolCalls）
     /// - 移除中间孤立的 ToolResult（前面不是 AssistantToolCalls 或 ToolResult）
@@ -78,7 +98,7 @@ impl Agent {
             match &msg {
                 ConversationMessage::ToolResult { .. } => {
                     // ToolResult 只能出现在 AssistantToolCalls 或另一个 ToolResult 之后
-                    let prev_ok = cleaned.last().map_or(false, |prev| {
+                    let prev_ok = cleaned.last().is_some_and(|prev| {
                         matches!(
                             prev,
                             ConversationMessage::AssistantToolCalls { .. }
@@ -446,6 +466,18 @@ impl Agent {
             "- 失败时分析 [部分输出] 定位问题，而不是重试相同命令\n",
             "- 一个目标最多尝试 3 种不同方式，之后向用户说明情况\n",
             "- file_read 返回空字符串表示文件为空，不是错误",
+        ).to_string());
+
+        // [7] 行为准则（prompt engineering，减少对模型理解能力的依赖）
+        parts.push(concat!(
+            "[行为准则]\n",
+            "- 对话历史已经在消息上下文中，不要用 shell 命令查看聊天记录或命令历史\n",
+            "- 优先从上下文已有信息回答问题，只在信息不足时才使用工具\n",
+            "- 使用工具前先说明意图和原因，不要无解释地直接调用\n",
+            "- 每次只调用必要的工具，不要一次发起大量无关的工具调用\n",
+            "- 如果用户的问题可以直接回答（如解释概念、分析代码），不需要调用工具\n",
+            "- 不确定该怎么做时，先询问用户而不是猜测性地执行命令\n",
+            "- 始终用中文回复用户，除非用户明确使用其他语言",
         ).to_string());
 
         parts.join("\n\n")
