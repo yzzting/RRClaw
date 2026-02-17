@@ -1,6 +1,8 @@
 use color_eyre::eyre::{Context, Result};
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
+use std::collections::HashSet;
 use std::io::{BufRead, Write};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
@@ -13,17 +15,62 @@ fn today_session_id() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// 从 shell 命令中提取基础命令名（如 "cargo test" → "cargo"）
+fn extract_base_command(args: &serde_json::Value) -> Option<String> {
+    args.get("command")
+        .and_then(|v| v.as_str())
+        .and_then(|cmd| cmd.split_whitespace().next())
+        .and_then(|base| base.rsplit('/').next())
+        .map(|s| s.to_string())
+}
+
+/// 生成自动批准的 key：shell 工具按基础命令名，其他工具按工具名
+fn approval_key(tool_name: &str, args: &serde_json::Value) -> String {
+    if tool_name == "shell" {
+        if let Some(base_cmd) = extract_base_command(args) {
+            return format!("shell:{}", base_cmd);
+        }
+    }
+    tool_name.to_string()
+}
+
 /// 给 Agent 注入 CLI 确认回调（Supervised 模式下生效）
+/// 支持会话级自动批准：y=本次, n=拒绝, a=本会话自动批准该工具/命令
 pub fn setup_cli_confirm(agent: &mut Agent) {
-    agent.set_confirm_fn(Box::new(|name, args| {
+    let approved: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
+    agent.set_confirm_fn(Box::new(move |name, args| {
+        let key = approval_key(name, args);
+
+        // 检查是否已自动批准
+        if approved.lock().unwrap().contains(&key) {
+            let display = if name == "shell" {
+                extract_base_command(args).unwrap_or_else(|| name.to_string())
+            } else {
+                name.to_string()
+            };
+            println!("\n✓ 自动批准 '{}' (本会话已授权)", display);
+            return true;
+        }
+
         let args_str = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
-        print!("\n⚠ 执行工具 '{}'\n  参数: {}\n  确认执行? [y/N] ", name, args_str);
+        print!(
+            "\n⚠ 执行工具 '{}'\n  参数: {}\n  确认执行? [y/N/a(本会话自动批准)] ",
+            name, args_str
+        );
         let _ = std::io::stdout().flush();
 
         let mut input = String::new();
         if std::io::stdin().lock().read_line(&mut input).is_ok() {
             let answer = input.trim().to_lowercase();
-            answer == "y" || answer == "yes"
+            match answer.as_str() {
+                "a" | "always" => {
+                    approved.lock().unwrap().insert(key);
+                    true
+                }
+                "y" | "yes" => true,
+                _ => false,
+            }
         } else {
             false
         }
