@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result};
+use futures_util::StreamExt;
 use serde::Deserialize;
+use tokio::sync::mpsc;
+use tracing::{debug, trace, warn};
 
 use crate::config::ProviderConfig;
 
 use super::traits::{
-    ChatMessage, ChatResponse, ConversationMessage, Provider, ToolCall, ToolSpec,
+    ChatMessage, ChatResponse, ConversationMessage, Provider, StreamEvent, ToolCall, ToolSpec,
 };
 
 /// Anthropic Messages API Provider
@@ -106,6 +109,39 @@ impl ClaudeProvider {
             .collect()
     }
 
+    /// 构造请求体
+    fn build_request_body(
+        messages: &[ConversationMessage],
+        tools: &[ToolSpec],
+        model: &str,
+        temperature: f64,
+        stream: bool,
+    ) -> serde_json::Value {
+        let (system, claude_messages) = Self::extract_system(messages);
+
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 8192,
+            "messages": claude_messages,
+            "temperature": temperature,
+        });
+
+        if let Some(system_text) = system {
+            body["system"] = serde_json::Value::String(system_text);
+        }
+
+        let built_tools = Self::build_tools(tools);
+        if !built_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(built_tools);
+        }
+
+        if stream {
+            body["stream"] = serde_json::json!(true);
+        }
+
+        body
+    }
+
     /// 解析 Claude 响应
     fn parse_response(body: &ClaudeResponse) -> ChatResponse {
         let mut text_parts = Vec::new();
@@ -152,23 +188,10 @@ impl Provider for ClaudeProvider {
         model: &str,
         temperature: f64,
     ) -> Result<ChatResponse> {
-        let (system, claude_messages) = Self::extract_system(messages);
+        let body = Self::build_request_body(messages, tools, model, temperature, false);
 
-        let mut body = serde_json::json!({
-            "model": model,
-            "max_tokens": 8192,
-            "messages": claude_messages,
-            "temperature": temperature,
-        });
-
-        if let Some(system_text) = system {
-            body["system"] = serde_json::Value::String(system_text);
-        }
-
-        let built_tools = Self::build_tools(tools);
-        if !built_tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(built_tools);
-        }
+        debug!("Claude API 请求: {} model={}", self.endpoint(), model);
+        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
         let resp = self
             .client
@@ -196,6 +219,155 @@ impl Provider for ClaudeProvider {
             serde_json::from_str(&resp_text).wrap_err("解析响应 JSON 失败")?;
 
         Ok(Self::parse_response(&parsed))
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolSpec],
+        model: &str,
+        temperature: f64,
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> Result<ChatResponse> {
+        let body = Self::build_request_body(messages, tools, model, temperature, true);
+
+        debug!("Claude API 流式请求: {} model={}", self.endpoint(), model);
+        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .wrap_err("发送流式请求失败")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_text = resp.text().await.wrap_err("读取错误响应失败")?;
+            return Err(color_eyre::eyre::eyre!(
+                "Claude API 流式请求失败 ({}): {}",
+                status,
+                err_text
+            ));
+        }
+
+        debug!("Claude API 流式响应状态: {}", status);
+
+        // 累积状态
+        let mut text_parts = Vec::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut current_tool_input = String::new();
+        let mut line_buf = String::new();
+
+        let mut byte_stream = resp.bytes_stream();
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = chunk.wrap_err("读取 SSE 数据块失败")?;
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            line_buf.push_str(&chunk_str);
+
+            while let Some(newline_pos) = line_buf.find('\n') {
+                let line = line_buf[..newline_pos].trim().to_string();
+                line_buf = line_buf[newline_pos + 1..].to_string();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                let json_str = match line.strip_prefix("data: ") {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let event: serde_json::Value = match serde_json::from_str(json_str) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("Claude SSE JSON 解析失败: {} line={}", e, json_str);
+                        continue;
+                    }
+                };
+
+                let event_type = event["type"].as_str().unwrap_or("");
+                match event_type {
+                    "content_block_start" => {
+                        let block = &event["content_block"];
+                        if block["type"].as_str() == Some("tool_use") {
+                            // 新 tool_use block 开始
+                            let id = block["id"].as_str().unwrap_or("").to_string();
+                            let name = block["name"].as_str().unwrap_or("").to_string();
+                            tool_calls.push(ToolCall {
+                                id,
+                                name,
+                                arguments: serde_json::Value::Object(serde_json::Map::new()),
+                            });
+                            current_tool_input.clear();
+                        }
+                    }
+                    "content_block_delta" => {
+                        let delta = &event["delta"];
+                        match delta["type"].as_str() {
+                            Some("text_delta") => {
+                                if let Some(text) = delta["text"].as_str() {
+                                    if !text.is_empty() {
+                                        text_parts.push(text.to_string());
+                                        let _ = tx.send(StreamEvent::Text(text.to_string())).await;
+                                    }
+                                }
+                            }
+                            Some("input_json_delta") => {
+                                if let Some(partial) = delta["partial_json"].as_str() {
+                                    current_tool_input.push_str(partial);
+                                    let idx = if tool_calls.is_empty() { 0 } else { tool_calls.len() - 1 };
+                                    let _ = tx
+                                        .send(StreamEvent::ToolCallDelta {
+                                            index: idx,
+                                            id: None,
+                                            name: None,
+                                            arguments_delta: partial.to_string(),
+                                        })
+                                        .await;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    "content_block_stop" => {
+                        // 当前 block 结束，如果是 tool_use，解析累积的 input
+                        if !current_tool_input.is_empty() {
+                            if let Some(tc) = tool_calls.last_mut() {
+                                tc.arguments = serde_json::from_str(&current_tool_input)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            }
+                            current_tool_input.clear();
+                        }
+                    }
+                    "message_stop" => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let text = if text_parts.is_empty() {
+            None
+        } else {
+            Some(text_parts.join(""))
+        };
+
+        let response = ChatResponse { text, tool_calls };
+        let _ = tx.send(StreamEvent::Done(response.clone())).await;
+
+        debug!(
+            "Claude 流式响应完成: text_len={}, tool_calls={}",
+            response.text.as_ref().map(|t| t.len()).unwrap_or(0),
+            response.tool_calls.len()
+        );
+
+        Ok(response)
     }
 }
 
