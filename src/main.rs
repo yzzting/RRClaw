@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 #[derive(Parser)]
@@ -86,10 +87,12 @@ async fn run_agent(
     // 创建 Tools
     let tools = rrclaw::tools::create_tools();
 
-    // 创建 Memory
+    // 创建 Memory（Arc 共享给 Agent 和 CLI）
     let data_dir = data_dir()?;
-    let memory = rrclaw::memory::SqliteMemory::open(&data_dir)
-        .wrap_err("初始化 Memory 失败")?;
+    let memory = Arc::new(
+        rrclaw::memory::SqliteMemory::open(&data_dir)
+            .wrap_err("初始化 Memory 失败")?,
+    );
 
     // 创建 SecurityPolicy
     let policy = rrclaw::security::SecurityPolicy {
@@ -103,7 +106,7 @@ async fn run_agent(
     let mut agent = rrclaw::agent::Agent::new(
         provider,
         tools,
-        Box::new(memory),
+        Box::new(memory.clone()),
         policy,
         model,
         config.default.temperature,
@@ -111,8 +114,8 @@ async fn run_agent(
 
     // 运行
     match message {
-        Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg).await?,
-        None => rrclaw::channels::cli::run_repl(&mut agent).await?,
+        Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
+        None => rrclaw::channels::cli::run_repl(&mut agent, &memory).await?,
     }
 
     Ok(())

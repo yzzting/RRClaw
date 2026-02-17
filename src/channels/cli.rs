@@ -2,9 +2,16 @@ use color_eyre::eyre::{Context, Result};
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 use std::io::{BufRead, Write};
 use tokio::sync::mpsc;
+use tracing::{debug, info};
 
 use crate::agent::Agent;
+use crate::memory::SqliteMemory;
 use crate::providers::StreamEvent;
+
+/// 当天日期作为 session ID
+fn today_session_id() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
 
 /// 给 Agent 注入 CLI 确认回调（Supervised 模式下生效）
 pub fn setup_cli_confirm(agent: &mut Agent) {
@@ -24,8 +31,17 @@ pub fn setup_cli_confirm(agent: &mut Agent) {
 }
 
 /// 运行 CLI REPL 交互循环（流式输出）
-pub async fn run_repl(agent: &mut Agent) -> Result<()> {
+pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
     setup_cli_confirm(agent);
+
+    // 加载今天的对话历史
+    let session_id = today_session_id();
+    let history = memory.load_conversation_history(&session_id).await?;
+    if !history.is_empty() {
+        info!("恢复 {} 条对话历史 (session: {})", history.len(), session_id);
+        println!("(已恢复 {} 条对话历史)", history.len());
+        agent.set_history(history);
+    }
 
     let mut line_editor = Reedline::create();
     let prompt = DefaultPrompt::new(
@@ -62,6 +78,14 @@ pub async fn run_repl(agent: &mut Agent) -> Result<()> {
                 if let Err(e) = stream_message(agent, input).await {
                     eprintln!("错误: {:#}\n", e);
                 }
+
+                // 每轮对话后自动保存历史
+                if let Err(e) = memory
+                    .save_conversation_history(&session_id, agent.history())
+                    .await
+                {
+                    debug!("保存对话历史失败: {:#}", e);
+                }
             }
             Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
                 println!("\n再见！");
@@ -72,6 +96,14 @@ pub async fn run_repl(agent: &mut Agent) -> Result<()> {
                 break;
             }
         }
+    }
+
+    // 退出时最终保存一次
+    if let Err(e) = memory
+        .save_conversation_history(&session_id, agent.history())
+        .await
+    {
+        debug!("退出时保存对话历史失败: {:#}", e);
     }
 
     Ok(())
@@ -126,8 +158,9 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
 }
 
 /// 单次消息模式（流式输出）
-pub async fn run_single(agent: &mut Agent, message: &str) -> Result<()> {
+pub async fn run_single(agent: &mut Agent, message: &str, memory: &SqliteMemory) -> Result<()> {
     setup_cli_confirm(agent);
+
     let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);
 
     let print_handle = tokio::spawn(async move {
@@ -145,6 +178,15 @@ pub async fn run_single(agent: &mut Agent, message: &str) -> Result<()> {
 
     if let Err(e) = result {
         eprintln!("错误: {:#}", e);
+    }
+
+    // 单次消息也保存历史
+    let session_id = today_session_id();
+    if let Err(e) = memory
+        .save_conversation_history(&session_id, agent.history())
+        .await
+    {
+        debug!("保存对话历史失败: {:#}", e);
     }
 
     Ok(())

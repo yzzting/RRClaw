@@ -197,6 +197,23 @@ impl SqliteMemory {
     }
 }
 
+// 支持 Arc<SqliteMemory> 作为 Box<dyn Memory> 使用
+#[async_trait]
+impl Memory for Arc<SqliteMemory> {
+    async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> Result<()> {
+        SqliteMemory::store(self, key, content, category).await
+    }
+    async fn recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+        SqliteMemory::recall(self, query, limit).await
+    }
+    async fn forget(&self, key: &str) -> Result<bool> {
+        SqliteMemory::forget(self, key).await
+    }
+    async fn count(&self) -> Result<usize> {
+        SqliteMemory::count(self).await
+    }
+}
+
 #[async_trait]
 impl Memory for SqliteMemory {
     async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> Result<()> {
