@@ -1,13 +1,32 @@
 use color_eyre::eyre::{Context, Result};
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
-use std::io::Write;
+use std::io::{BufRead, Write};
 use tokio::sync::mpsc;
 
 use crate::agent::Agent;
 use crate::providers::StreamEvent;
 
+/// 给 Agent 注入 CLI 确认回调（Supervised 模式下生效）
+pub fn setup_cli_confirm(agent: &mut Agent) {
+    agent.set_confirm_fn(Box::new(|name, args| {
+        let args_str = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+        print!("\n⚠ 执行工具 '{}'\n  参数: {}\n  确认执行? [y/N] ", name, args_str);
+        let _ = std::io::stdout().flush();
+
+        let mut input = String::new();
+        if std::io::stdin().lock().read_line(&mut input).is_ok() {
+            let answer = input.trim().to_lowercase();
+            answer == "y" || answer == "yes"
+        } else {
+            false
+        }
+    }));
+}
+
 /// 运行 CLI REPL 交互循环（流式输出）
 pub async fn run_repl(agent: &mut Agent) -> Result<()> {
+    setup_cli_confirm(agent);
+
     let mut line_editor = Reedline::create();
     let prompt = DefaultPrompt::new(
         DefaultPromptSegment::Basic("rrclaw".to_string()),
@@ -108,6 +127,7 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
 
 /// 单次消息模式（流式输出）
 pub async fn run_single(agent: &mut Agent, message: &str) -> Result<()> {
+    setup_cli_confirm(agent);
     let (tx, mut rx) = mpsc::channel::<StreamEvent>(64);
 
     let print_handle = tokio::spawn(async move {
