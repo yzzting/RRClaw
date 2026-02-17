@@ -110,6 +110,7 @@ pub fn run_setup() -> Result<()> {
             autonomy,
             ..SecurityConfig::default()
         },
+        telegram: None,
     };
 
     // 写入配置文件

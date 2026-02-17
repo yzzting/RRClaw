@@ -15,6 +15,17 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     pub memory: MemoryConfig,
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub telegram: Option<TelegramConfig>,
+}
+
+/// Telegram Bot 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    pub bot_token: String,
+    /// 允许的 chat ID 列表（空 = 允许所有）
+    #[serde(default)]
+    pub allowed_chat_ids: Vec<i64>,
 }
 
 /// 默认 Provider 设置
