@@ -23,13 +23,13 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
         name: "glm",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
-        models: &["glm-4-flash", "glm-4-plus", "glm-4-long"],
+        models: &["glm-4.7", "glm-4-flash", "glm-4-plus", "glm-4-long"],
         auth_style: None,
     },
     ProviderInfo {
         name: "minimax",
         base_url: "https://api.minimax.chat/v1",
-        models: &["MiniMax-Text-01"],
+        models: &["MiniMax-M2.5", "MiniMax-Text-01"],
         auth_style: None,
     },
     ProviderInfo {
