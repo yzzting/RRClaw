@@ -4,33 +4,63 @@ use dialoguer::{Input, Password, Select};
 use super::schema::{Config, DefaultConfig, MemoryConfig, ProviderConfig, SecurityConfig};
 use crate::security::AutonomyLevel;
 
-/// Provider 选项
-const PROVIDERS: &[(&str, &str, &str)] = &[
-    ("deepseek", "https://api.deepseek.com/v1", "deepseek-chat"),
-    (
-        "glm",
-        "https://open.bigmodel.cn/api/paas/v4",
-        "glm-4-flash",
-    ),
-    (
-        "minimax",
-        "https://api.minimax.chat/v1",
-        "MiniMax-Text-01",
-    ),
-    (
-        "claude",
-        "https://api.anthropic.com",
-        "claude-sonnet-4-5-20250929",
-    ),
-    ("gpt", "https://api.openai.com/v1", "gpt-4o"),
+/// 已知 Provider 信息（名称、默认 base_url、已知模型列表、认证方式）
+pub struct ProviderInfo {
+    pub name: &'static str,
+    pub base_url: &'static str,
+    pub models: &'static [&'static str],
+    pub auth_style: Option<&'static str>,
+}
+
+/// 所有已知 Provider 列表
+pub const PROVIDERS: &[ProviderInfo] = &[
+    ProviderInfo {
+        name: "deepseek",
+        base_url: "https://api.deepseek.com/v1",
+        models: &["deepseek-chat", "deepseek-reasoner"],
+        auth_style: None,
+    },
+    ProviderInfo {
+        name: "glm",
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        models: &["glm-4-flash", "glm-4-plus", "glm-4-long"],
+        auth_style: None,
+    },
+    ProviderInfo {
+        name: "minimax",
+        base_url: "https://api.minimax.chat/v1",
+        models: &["MiniMax-Text-01"],
+        auth_style: None,
+    },
+    ProviderInfo {
+        name: "claude",
+        base_url: "https://api.anthropic.com",
+        models: &[
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6",
+        ],
+        auth_style: Some("x-api-key"),
+    },
+    ProviderInfo {
+        name: "gpt",
+        base_url: "https://api.openai.com/v1",
+        models: &["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+        auth_style: None,
+    },
 ];
+
+/// 根据名称查找 ProviderInfo
+pub fn find_provider_info(name: &str) -> Option<&'static ProviderInfo> {
+    PROVIDERS.iter().find(|p| p.name == name)
+}
 
 /// 运行交互式配置向导
 pub fn run_setup() -> Result<()> {
     println!("🔧 RRClaw 配置向导\n");
 
     // 1. 选择 Provider
-    let provider_names: Vec<&str> = PROVIDERS.iter().map(|(name, _, _)| *name).collect();
+    let provider_names: Vec<&str> = PROVIDERS.iter().map(|p| p.name).collect();
     let provider_idx = Select::new()
         .with_prompt("选择默认 Provider")
         .items(&provider_names)
@@ -38,22 +68,18 @@ pub fn run_setup() -> Result<()> {
         .interact()
         .wrap_err("选择 Provider 失败")?;
 
-    let (provider_name, base_url, default_model) = PROVIDERS[provider_idx];
+    let info = &PROVIDERS[provider_idx];
     println!();
 
     // 2. 输入 API Key
     let api_key: String = Password::new()
-        .with_prompt(format!("{} API Key", provider_name))
+        .with_prompt(format!("{} API Key", info.name))
         .interact()
         .wrap_err("输入 API Key 失败")?;
     println!();
 
-    // 3. 选择/输入模型
-    let model: String = Input::new()
-        .with_prompt("默认模型")
-        .default(default_model.to_string())
-        .interact_text()
-        .wrap_err("输入模型失败")?;
+    // 3. 选择模型
+    let model = select_model(info)?;
     println!();
 
     // 4. 设置 temperature
@@ -82,25 +108,19 @@ pub fn run_setup() -> Result<()> {
 
     // 构造配置
     let mut providers = std::collections::HashMap::new();
-    let auth_style = if provider_name == "claude" {
-        Some("x-api-key".to_string())
-    } else {
-        None
-    };
-
     providers.insert(
-        provider_name.to_string(),
+        info.name.to_string(),
         ProviderConfig {
-            base_url: base_url.to_string(),
+            base_url: info.base_url.to_string(),
             api_key,
             model: model.clone(),
-            auth_style,
+            auth_style: info.auth_style.map(|s| s.to_string()),
         },
     );
 
     let config = Config {
         default: DefaultConfig {
-            provider: provider_name.to_string(),
+            provider: info.name.to_string(),
             model,
             temperature,
         },
@@ -126,6 +146,29 @@ pub fn run_setup() -> Result<()> {
     println!("\n你可以随时编辑该文件添加更多 Provider 或调整设置。");
 
     Ok(())
+}
+
+/// 从 ProviderInfo 的模型列表中选择模型（含"自定义"选项）
+pub fn select_model(info: &ProviderInfo) -> Result<String> {
+    let mut items: Vec<String> = info.models.iter().map(|m| m.to_string()).collect();
+    items.push("自定义...".to_string());
+
+    let idx = Select::new()
+        .with_prompt("选择模型")
+        .items(&items)
+        .default(0)
+        .interact()
+        .wrap_err("选择模型失败")?;
+
+    if idx < info.models.len() {
+        Ok(info.models[idx].to_string())
+    } else {
+        let custom: String = Input::new()
+            .with_prompt("输入模型名称")
+            .interact_text()
+            .wrap_err("输入模型名失败")?;
+        Ok(custom)
+    }
 }
 
 /// 将 Config 转为可读的 TOML 字符串
