@@ -114,6 +114,8 @@ async fn run_agent(
         tools,
         Box::new(memory.clone()),
         policy,
+        provider_key.to_string(),
+        provider_config.base_url.clone(),
         model,
         config.default.temperature,
     );
@@ -121,7 +123,7 @@ async fn run_agent(
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
-        None => rrclaw::channels::cli::run_repl(&mut agent, &memory).await?,
+        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config).await?,
     }
 
     Ok(())

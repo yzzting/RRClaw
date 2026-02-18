@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use crate::agent::Agent;
+use crate::config::Config;
 use crate::memory::SqliteMemory;
 use crate::providers::{StreamEvent, ToolStatusKind};
 
@@ -78,7 +79,7 @@ pub fn setup_cli_confirm(agent: &mut Agent) {
 }
 
 /// 运行 CLI REPL 交互循环（流式输出）
-pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
+pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory, config: &Config) -> Result<()> {
     setup_cli_confirm(agent);
 
     // 加载今天的对话历史
@@ -123,7 +124,7 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory) -> Result<()> {
 
                 // 斜杠命令
                 if let Some(cmd) = input.strip_prefix('/') {
-                    handle_slash_command(cmd, agent, &session_id, memory).await?;
+                    handle_slash_command(cmd, agent, &session_id, memory, config).await?;
                     continue;
                 }
 
@@ -168,6 +169,7 @@ async fn handle_slash_command(
     agent: &mut Agent,
     session_id: &str,
     memory: &SqliteMemory,
+    config: &Config,
 ) -> Result<()> {
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     let name = parts[0];
@@ -195,24 +197,45 @@ async fn handle_slash_command(
         "config" => {
             let policy = agent.policy();
             println!("当前配置:");
+            println!("  Provider: {}", agent.provider_name());
+            println!("  Base URL: {}", agent.base_url());
             println!("  模型: {}", agent.model());
             println!("  温度: {}", agent.temperature());
             println!("  安全模式: {:?}", policy.autonomy);
             println!("  工作目录: {}", policy.workspace_dir.display());
             println!("  命令白名单: {:?}", policy.allowed_commands);
             if !policy.blocked_paths.is_empty() {
-                let paths: Vec<String> = policy.blocked_paths.iter()
-                    .map(|p| p.display().to_string()).collect();
+                let paths: Vec<String> = policy
+                    .blocked_paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
                 println!("  禁止路径: {:?}", paths);
             }
         }
-        "model" => {
-            if let Some(model_name) = arg {
-                agent.set_model(model_name.to_string());
-                println!("模型已切换为: {}", model_name);
+        "provider" => {
+            if let Some(provider_name) = arg {
+                switch_provider(agent, config, provider_name, None);
             } else {
-                println!("当前模型: {}", agent.model());
-                println!("用法: /model <model-name>");
+                println!("当前 Provider: {}", agent.provider_name());
+                let available: Vec<&str> = config.providers.keys().map(|s| s.as_str()).collect();
+                println!("可用: {}", available.join(", "));
+                println!("用法: /provider <name>");
+            }
+        }
+        "model" => {
+            if let Some(spec) = arg {
+                if let Some((provider_name, model_name)) = spec.split_once('/') {
+                    // provider/model 格式：同时切换 provider 和模型
+                    switch_provider(agent, config, provider_name, Some(model_name));
+                } else {
+                    // 仅模型名：同 provider 下切换
+                    agent.set_model(spec.to_string());
+                    println!("模型已切换为: {} (Provider: {})", spec, agent.provider_name());
+                }
+            } else {
+                println!("当前模型: {} (Provider: {})", agent.model(), agent.provider_name());
+                println!("用法: /model <model-name>  或  /model <provider>/<model>");
             }
         }
         _ => {
@@ -222,17 +245,52 @@ async fn handle_slash_command(
     Ok(())
 }
 
+/// 切换 Provider（和可选的模型）
+fn switch_provider(agent: &mut Agent, config: &Config, provider_name: &str, model: Option<&str>) {
+    let provider_config = match config.providers.get(provider_name) {
+        Some(pc) => pc,
+        None => {
+            let available: Vec<&str> = config.providers.keys().map(|s| s.as_str()).collect();
+            println!(
+                "Provider '{}' 未配置。可用: {}",
+                provider_name,
+                available.join(", ")
+            );
+            return;
+        }
+    };
+
+    let new_provider = crate::providers::create_provider(provider_config);
+    let model_name = model
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| provider_config.model.clone());
+    let base_url = provider_config.base_url.clone();
+
+    agent.switch_provider(
+        new_provider,
+        provider_name.to_string(),
+        base_url.clone(),
+        model_name.clone(),
+    );
+    println!(
+        "已切换到 {} (模型: {}, URL: {})",
+        provider_name, model_name, base_url
+    );
+}
+
 /// 打印帮助信息
 fn print_help() {
     println!("可用命令:");
-    println!("  /help, /h       显示此帮助");
-    println!("  /new            新建对话（清空历史）");
-    println!("  /clear          清屏");
-    println!("  /config         显示当前配置");
-    println!("  /model <name>   切换模型");
+    println!("  /help, /h              显示此帮助");
+    println!("  /new                   新建对话（清空历史）");
+    println!("  /clear                 清屏");
+    println!("  /config                显示当前配置");
+    println!("  /provider <name>       切换 Provider");
+    println!("  /model <name>          切换模型（同 Provider）");
+    println!("  /model <provider/model> 同时切换 Provider 和模型");
     println!();
-    println!("  exit, quit      退出");
-    println!("  clear           清屏");
+    println!("  exit, quit             退出");
+    println!("  clear                  清屏");
     println!();
     println!("其他输入会发送给 AI 处理。");
 }

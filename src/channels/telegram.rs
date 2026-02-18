@@ -46,6 +46,8 @@ impl AgentFactory {
             tools,
             Box::new(self.memory.clone()),
             policy,
+            provider_key.to_string(),
+            provider_config.base_url.clone(),
             self.config.default.model.clone(),
             self.config.default.temperature,
         ))
