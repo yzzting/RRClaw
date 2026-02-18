@@ -21,6 +21,8 @@ pub struct Agent {
     tools: Vec<Box<dyn Tool>>,
     memory: Box<dyn Memory>,
     policy: SecurityPolicy,
+    provider_name: String,
+    base_url: String,
     model: String,
     temperature: f64,
     history: Vec<ConversationMessage>,
@@ -28,11 +30,14 @@ pub struct Agent {
 }
 
 impl Agent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: Box<dyn Provider>,
         tools: Vec<Box<dyn Tool>>,
         memory: Box<dyn Memory>,
         policy: SecurityPolicy,
+        provider_name: String,
+        base_url: String,
         model: String,
         temperature: f64,
     ) -> Self {
@@ -41,6 +46,8 @@ impl Agent {
             tools,
             memory,
             policy,
+            provider_name,
+            base_url,
             model,
             temperature,
             history: Vec::new(),
@@ -70,13 +77,37 @@ impl Agent {
         self.history.clear();
     }
 
+    /// 获取当前 Provider 名
+    pub fn provider_name(&self) -> &str {
+        &self.provider_name
+    }
+
+    /// 获取当前 base_url
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// 获取当前模型名
     pub fn model(&self) -> &str {
         &self.model
     }
 
-    /// 运行时切换模型
+    /// 运行时切换模型（同 Provider 下）
     pub fn set_model(&mut self, model: String) {
+        self.model = model;
+    }
+
+    /// 运行时切换 Provider、模型和 base_url
+    pub fn switch_provider(
+        &mut self,
+        provider: Box<dyn Provider>,
+        provider_name: String,
+        base_url: String,
+        model: String,
+    ) {
+        self.provider = provider;
+        self.provider_name = provider_name;
+        self.base_url = base_url;
         self.model = model;
     }
 
@@ -645,6 +676,8 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -682,6 +715,8 @@ mod tests {
             vec![Box::new(mock_tool)],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -712,6 +747,8 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -727,6 +764,8 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test".to_string(),
             0.7,
         );
@@ -745,6 +784,8 @@ mod tests {
             vec![Box::new(tool)],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test".to_string(),
             0.7,
         );
@@ -782,6 +823,8 @@ mod tests {
             vec![Box::new(mock_tool)],
             Box::new(MockMemory),
             policy,
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -823,6 +866,8 @@ mod tests {
             vec![Box::new(mock_tool)],
             Box::new(MockMemory),
             policy,
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -862,6 +907,8 @@ mod tests {
             vec![Box::new(mock_tool)],
             Box::new(MockMemory),
             test_policy(), // Full mode
+            "test".to_string(),
+            "http://test".to_string(),
             "test-model".to_string(),
             0.7,
         );
@@ -882,6 +929,8 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
             "test".to_string(),
             0.7,
         );
