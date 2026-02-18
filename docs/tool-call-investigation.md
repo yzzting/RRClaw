@@ -397,7 +397,104 @@ ALTER TABLE conversation_history ADD COLUMN reasoning_content TEXT;
 
 ---
 
-## 八、后续优化（不在本次范围）
+## 八、手动验证 Tool Call 是否生效
+
+### 方法 1: 查看日志文件（推荐）
+
+日志文件记录了完整的 API 请求/响应和工具执行过程，是验证 tool call 最可靠的方式。
+
+```bash
+# 开启详细日志运行 rrclaw
+RUST_LOG=rrclaw=debug cargo run -- agent
+
+# 另一个终端实时查看日志
+tail -f ~/.rrclaw/logs/rrclaw.log.*
+```
+
+**验证 tool call 发起**: 在 REPL 中说 "帮我看看当前目录有什么文件"，然后在日志中查找:
+
+```
+# 关键日志行（证明 tool call 发生了）:
+rrclaw::agent::loop_: 执行工具: shell args={"command":"ls"}
+rrclaw::agent::loop_: 工具结果: file1.txt...
+```
+
+**验证 reasoning_content 传递**: 使用 `RUST_LOG=rrclaw=trace` 可以看到完整请求体:
+
+```bash
+RUST_LOG=rrclaw=trace cargo run -- agent
+```
+
+日志中查找 `请求体:` 部分，检查:
+- assistant 消息是否包含 `"reasoning_content": "..."` （有思考时）
+- assistant 消息是否不包含 `"reasoning_content"` （无思考时）
+
+### 方法 2: REPL 中观察 UI 反馈
+
+当模型触发 tool call 时，CLI 会显示:
+
+```
+⚠ 执行工具 'shell'                    ← Supervised 模式确认提示
+  参数: { "command": "ls" }
+  确认执行? [y/N/a(本会话自动批准)]
+
+⏳ ls ...                              ← 工具执行中
+ ✓ file1.txt file2.txt (共45字节)      ← 工具执行成功
+
+⠋ 思考中...                            ← 模型根据工具结果生成回答
+最终回答内容...                         ← 模型最终回复
+```
+
+**如果没看到 `⚠ 执行工具` 提示**: 说明模型没有触发 tool call，而是直接用文本回答了。
+
+### 方法 3: 构造明确需要工具的问题
+
+有些问题模型可能选择直接回答而不调用工具。使用以下提示更容易触发 tool call:
+
+```
+# 高概率触发 shell tool call:
+"运行 ls -la 命令看看当前目录"
+"执行 date 命令告诉我现在几点"
+"用 cat 看一下 Cargo.toml 的内容"
+
+# 高概率触发 file_read tool call:
+"读取 src/main.rs 文件的内容"
+```
+
+### 方法 4: 检查数据库中的对话历史
+
+```bash
+# 查看 conversation_history 中的 tool call 记录
+sqlite3 ~/.rrclaw/data/memory.db \
+  "SELECT payload FROM conversation_history ORDER BY id DESC LIMIT 10;" \
+  | python3 -m json.tool 2>/dev/null || \
+sqlite3 ~/.rrclaw/data/memory.db \
+  "SELECT payload FROM conversation_history ORDER BY id DESC LIMIT 10;"
+```
+
+查找包含 `"AssistantToolCalls"` 的 payload，确认:
+- `tool_calls` 数组不为空
+- `reasoning_content` 字段存在（DeepSeek Reasoner/MiniMax M2.5）或缺失（GLM）
+
+### 方法 5: 对比不同 Provider
+
+```bash
+# 1. 用 GLM-4.7 测试
+cargo run -- agent   # 确认 config.toml 中 default.provider = "glm"
+# REPL 中: "运行 ls 命令"
+
+# 2. 切换到 DeepSeek
+# REPL 中: /switch → 选择 deepseek → deepseek-chat
+# REPL 中: "运行 ls 命令"
+```
+
+对比两个 Provider 的日志，确认:
+- GLM: 请求体中无 `reasoning_content` 字段
+- DeepSeek: 响应中可能包含 `reasoning_content`（如果用 reasoner 模型）
+
+---
+
+## 九、后续优化（不在本次范围）
 
 1. **MiniMax Anthropic SDK 格式**: 官方推荐 Anthropic 兼容接口，未来可以考虑为 MiniMax 增加 Claude-style 的 Provider 实现
 2. **DeepSeek Strict Mode**: 强制 JSON Schema 约束，减少 tool call 参数错误
