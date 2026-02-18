@@ -153,8 +153,27 @@ impl Agent {
         self.history = cleaned;
     }
 
+    /// 新 Turn 开始前，清空 history 中旧的 reasoning_content
+    /// DeepSeek/MiniMax 文档建议：新用户问题开始时删除旧 reasoning_content 以节省带宽
+    fn clear_old_reasoning_content(&mut self) {
+        for msg in &mut self.history {
+            match msg {
+                ConversationMessage::Chat(cm) if cm.role == "assistant" => {
+                    cm.reasoning_content = None;
+                }
+                ConversationMessage::AssistantToolCalls { reasoning_content, .. } => {
+                    *reasoning_content = None;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// 处理一条用户消息，返回 AI 最终回复
     pub async fn process_message(&mut self, user_msg: &str) -> Result<String> {
+        // 0. 新 Turn: 清空旧 reasoning_content（节省 token，DeepSeek/MiniMax 文档建议）
+        self.clear_old_reasoning_content();
+
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
@@ -206,7 +225,7 @@ impl Agent {
                 self.history.push(ConversationMessage::Chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: final_text.clone(),
-                    reasoning_content: None,
+                    reasoning_content: response.reasoning_content.clone(),
                 }));
                 break;
             }
@@ -215,7 +234,7 @@ impl Agent {
             self.history
                 .push(ConversationMessage::AssistantToolCalls {
                     text: response.text.clone(),
-                    reasoning_content: None,
+                    reasoning_content: response.reasoning_content.clone(),
                     tool_calls: response.tool_calls.clone(),
                 });
 
@@ -277,6 +296,9 @@ impl Agent {
         user_msg: &str,
         tx: mpsc::Sender<StreamEvent>,
     ) -> Result<String> {
+        // 0. 新 Turn: 清空旧 reasoning_content（节省 token，DeepSeek/MiniMax 文档建议）
+        self.clear_old_reasoning_content();
+
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
@@ -329,7 +351,7 @@ impl Agent {
                 self.history.push(ConversationMessage::Chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: final_text.clone(),
-                    reasoning_content: None,
+                    reasoning_content: response.reasoning_content.clone(),
                 }));
                 break;
             }
@@ -343,7 +365,7 @@ impl Agent {
             self.history
                 .push(ConversationMessage::AssistantToolCalls {
                     text: response.text.clone(),
-                    reasoning_content: None,
+                    reasoning_content: response.reasoning_content.clone(),
                     tool_calls: response.tool_calls.clone(),
                 });
 
