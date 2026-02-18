@@ -9,7 +9,7 @@ pub struct ChatMessage {
     pub role: String,
     pub content: String,
     /// DeepSeek/MiniMax 思考模式的推理内容（同一 Turn 内多轮 tool call 需回传）
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
 }
 
@@ -39,6 +39,7 @@ pub enum ConversationMessage {
     AssistantToolCalls {
         text: Option<String>,
         /// DeepSeek/MiniMax 思考模式的推理内容（同一 Turn 内多轮 tool call 需回传）
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         reasoning_content: Option<String>,
         tool_calls: Vec<ToolCall>,
     },
