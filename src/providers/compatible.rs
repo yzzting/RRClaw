@@ -38,22 +38,27 @@ impl CompatibleProvider {
 
         for msg in messages {
             match msg {
-                ConversationMessage::Chat(ChatMessage { role, content, .. }) => {
+                ConversationMessage::Chat(ChatMessage { role, content, reasoning_content }) => {
                     let mut obj = serde_json::json!({
                         "role": role,
                         "content": content,
                     });
-                    // DeepSeek Reasoner 要求 assistant 消息包含 reasoning_content
+                    // DeepSeek/MiniMax: 仅在有 reasoning_content 时才传递（同一 Turn 内回传）
                     if role == "assistant" {
-                        obj["reasoning_content"] = serde_json::json!("");
+                        if let Some(rc) = reasoning_content {
+                            obj["reasoning_content"] = serde_json::json!(rc);
+                        }
                     }
                     result.push(obj);
                 }
-                ConversationMessage::AssistantToolCalls { text, tool_calls, .. } => {
+                ConversationMessage::AssistantToolCalls { text, reasoning_content, tool_calls } => {
                     let mut obj = serde_json::json!({
                         "role": "assistant",
-                        "reasoning_content": serde_json::json!(""),
                     });
+                    // DeepSeek/MiniMax: 仅在有 reasoning_content 时才传递
+                    if let Some(rc) = reasoning_content {
+                        obj["reasoning_content"] = serde_json::json!(rc);
+                    }
                     if let Some(text) = text {
                         obj["content"] = serde_json::Value::String(text.clone());
                     }
@@ -146,11 +151,9 @@ impl CompatibleProvider {
             }
         };
 
-        // 优先 content，回退到 reasoning_content（DeepSeek Reasoner）
-        let text = choice.message.content.clone()
-            .filter(|s| !s.is_empty())
-            .or_else(|| choice.message.reasoning_content.clone()
-                .filter(|s| !s.is_empty()));
+        // 分别提取 text 和 reasoning_content（不再合并）
+        let text = choice.message.content.clone().filter(|s| !s.is_empty());
+        let reasoning_content = choice.message.reasoning_content.clone().filter(|s| !s.is_empty());
         let tool_calls = choice
             .message
             .tool_calls
@@ -167,7 +170,7 @@ impl CompatibleProvider {
             })
             .unwrap_or_default();
 
-        ChatResponse { text, reasoning_content: None, tool_calls }
+        ChatResponse { text, reasoning_content, tool_calls }
     }
 }
 
@@ -252,6 +255,7 @@ impl Provider for CompatibleProvider {
 
         // 累积状态
         let mut full_text = String::new();
+        let mut full_reasoning = String::new(); // reasoning_content 单独累积
         // tool_calls 累积: index → (id, name, arguments_buffer)
         let mut tool_calls_acc: Vec<(String, String, String)> = Vec::new();
         let mut line_buf = String::new();
@@ -291,14 +295,14 @@ impl Provider for CompatibleProvider {
                 };
 
                 if let Some(choice) = parsed.choices.first() {
-                    // 文本增量（优先 content，回退到 reasoning_content）
-                    let text_delta = choice.delta.content.as_deref()
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| choice.delta.reasoning_content.as_deref()
-                            .filter(|s| !s.is_empty()));
-                    if let Some(content) = text_delta {
+                    // 文本增量: content 和 reasoning_content 分别累积
+                    if let Some(content) = choice.delta.content.as_deref().filter(|s| !s.is_empty()) {
                         full_text.push_str(content);
                         let _ = tx.send(StreamEvent::Text(content.to_string())).await;
+                    }
+                    if let Some(rc) = choice.delta.reasoning_content.as_deref().filter(|s| !s.is_empty()) {
+                        full_reasoning.push_str(rc);
+                        let _ = tx.send(StreamEvent::Thinking).await;
                     }
 
                     // tool call 增量
@@ -357,7 +361,11 @@ impl Provider for CompatibleProvider {
             } else {
                 Some(full_text)
             },
-            reasoning_content: None,
+            reasoning_content: if full_reasoning.is_empty() {
+                None
+            } else {
+                Some(full_reasoning)
+            },
             tool_calls,
         };
 
