@@ -592,4 +592,121 @@ mod tests {
         assert!(parsed.text.is_none());
         assert!(parsed.tool_calls.is_empty());
     }
+
+    #[test]
+    fn parse_response_extracts_reasoning_content() {
+        let resp = OpenAIResponse {
+            choices: vec![OpenAIChoice {
+                message: OpenAIMessage {
+                    content: Some("最终回答".to_string()),
+                    reasoning_content: Some("让我想想...".to_string()),
+                    tool_calls: None,
+                },
+            }],
+        };
+        let parsed = CompatibleProvider::parse_response(&resp);
+        assert_eq!(parsed.text.as_deref(), Some("最终回答"));
+        assert_eq!(parsed.reasoning_content.as_deref(), Some("让我想想..."));
+    }
+
+    #[test]
+    fn parse_response_reasoning_only_no_text() {
+        // DeepSeek Reasoner: 只有 reasoning_content，没有 content（思考阶段）
+        let resp = OpenAIResponse {
+            choices: vec![OpenAIChoice {
+                message: OpenAIMessage {
+                    content: None,
+                    reasoning_content: Some("思考中...".to_string()),
+                    tool_calls: Some(vec![OpenAIToolCall {
+                        id: "call_1".to_string(),
+                        function: OpenAIFunction {
+                            name: "shell".to_string(),
+                            arguments: r#"{"command":"date"}"#.to_string(),
+                        },
+                    }]),
+                },
+            }],
+        };
+        let parsed = CompatibleProvider::parse_response(&resp);
+        assert!(parsed.text.is_none());
+        assert_eq!(parsed.reasoning_content.as_deref(), Some("思考中..."));
+        assert_eq!(parsed.tool_calls.len(), 1);
+    }
+
+    #[test]
+    fn build_messages_passes_reasoning_content() {
+        let msgs = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "回答".to_string(),
+                reasoning_content: Some("我的思考过程".to_string()),
+            }),
+        ];
+        let built = CompatibleProvider::build_messages(&msgs);
+        assert_eq!(built[0]["reasoning_content"], "我的思考过程");
+    }
+
+    #[test]
+    fn build_messages_omits_none_reasoning_content() {
+        let msgs = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "回答".to_string(),
+                reasoning_content: None,
+            }),
+        ];
+        let built = CompatibleProvider::build_messages(&msgs);
+        // reasoning_content 为 None 时不应出现在 JSON 中
+        assert!(built[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn build_messages_user_msg_no_reasoning() {
+        // user/system 消息不应包含 reasoning_content
+        let msgs = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: "你好".to_string(),
+                reasoning_content: None,
+            }),
+        ];
+        let built = CompatibleProvider::build_messages(&msgs);
+        assert!(built[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn build_messages_tool_calls_with_reasoning() {
+        let msgs = vec![
+            ConversationMessage::AssistantToolCalls {
+                text: Some("让我查一下".to_string()),
+                reasoning_content: Some("用户问了天气，我需要调用工具".to_string()),
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "date"}),
+                }],
+            },
+        ];
+        let built = CompatibleProvider::build_messages(&msgs);
+        assert_eq!(built[0]["reasoning_content"], "用户问了天气，我需要调用工具");
+        assert_eq!(built[0]["role"], "assistant");
+    }
+
+    #[test]
+    fn build_messages_tool_calls_without_reasoning() {
+        let msgs = vec![
+            ConversationMessage::AssistantToolCalls {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+        ];
+        let built = CompatibleProvider::build_messages(&msgs);
+        // 无 reasoning_content 时不应包含该字段
+        assert!(built[0].get("reasoning_content").is_none());
+    }
 }

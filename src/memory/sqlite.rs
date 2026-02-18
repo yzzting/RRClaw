@@ -524,6 +524,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conversation_history_reasoning_content_roundtrip() {
+        use crate::providers::{ChatMessage, ConversationMessage, ToolCall};
+
+        let mem = create_test_memory().await;
+        let session_id = "reasoning-test";
+
+        let history = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: "查看文件".to_string(),
+                reasoning_content: None,
+            }),
+            ConversationMessage::AssistantToolCalls {
+                text: Some("让我查看".to_string()),
+                reasoning_content: Some("用户需要查看文件列表".to_string()),
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+            ConversationMessage::ToolResult {
+                tool_call_id: "call_1".to_string(),
+                content: "file.txt".to_string(),
+            },
+            ConversationMessage::Chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "目录中有 file.txt".to_string(),
+                reasoning_content: Some("工具返回了文件列表".to_string()),
+            }),
+        ];
+
+        mem.save_conversation_history(session_id, &history).await.unwrap();
+        let loaded = mem.load_conversation_history(session_id).await.unwrap();
+        assert_eq!(loaded.len(), 4);
+
+        // 验证 AssistantToolCalls 的 reasoning_content 保留
+        if let ConversationMessage::AssistantToolCalls { reasoning_content, .. } = &loaded[1] {
+            assert_eq!(reasoning_content.as_deref(), Some("用户需要查看文件列表"));
+        } else {
+            panic!("第2条消息应是 AssistantToolCalls");
+        }
+
+        // 验证 Chat(assistant) 的 reasoning_content 保留
+        if let ConversationMessage::Chat(cm) = &loaded[3] {
+            assert_eq!(cm.reasoning_content.as_deref(), Some("工具返回了文件列表"));
+        } else {
+            panic!("第4条消息应是 Chat");
+        }
+    }
+
+    #[tokio::test]
+    async fn conversation_history_backward_compat() {
+        // 模拟旧格式 JSON（没有 reasoning_content 字段）
+        let mem = create_test_memory().await;
+        let session_id = "old-format";
+
+        // 手动插入旧格式 payload
+        let old_payload = r#"{"Chat":{"role":"assistant","content":"你好"}}"#;
+        let db = mem.db.lock().await;
+        db.execute(
+            "INSERT INTO conversation_history (session_id, seq, payload, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![session_id, 0i64, old_payload, "2024-01-01T00:00:00Z"],
+        ).unwrap();
+        drop(db);
+
+        let loaded = mem.load_conversation_history(session_id).await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        if let ConversationMessage::Chat(cm) = &loaded[0] {
+            assert_eq!(cm.content, "你好");
+            assert_eq!(cm.reasoning_content, None); // 旧数据应默认 None
+        } else {
+            panic!("应为 Chat 消息");
+        }
+    }
+
+    #[tokio::test]
     async fn memory_category_roundtrip() {
         let mem = create_test_memory().await;
 

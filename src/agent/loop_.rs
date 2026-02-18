@@ -988,4 +988,109 @@ mod tests {
         agent.trim_history();
         assert_eq!(agent.history.len(), MAX_HISTORY_SIZE);
     }
+
+    #[tokio::test]
+    async fn reasoning_content_preserved_in_tool_call_loop() {
+        // 模拟 DeepSeek Reasoner: 返回 reasoning_content + tool call，然后最终回复
+        let provider = MockProvider::new(vec![
+            ChatResponse {
+                text: None,
+                reasoning_content: Some("让我先查看文件列表".to_string()),
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                }],
+            },
+            ChatResponse {
+                text: Some("目录中有 file.txt".to_string()),
+                reasoning_content: Some("好的，我看到了文件".to_string()),
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mock_tool = MockTool {
+            tool_name: "shell".to_string(),
+            result: "file.txt".to_string(),
+        };
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(mock_tool)],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "deepseek-reasoner".to_string(),
+            0.7,
+        );
+
+        let reply = agent.process_message("列出文件").await.unwrap();
+        assert_eq!(reply, "目录中有 file.txt");
+
+        // 验证 history 中 AssistantToolCalls 保留了 reasoning_content
+        let has_reasoning = agent.history().iter().any(|msg| {
+            matches!(msg, ConversationMessage::AssistantToolCalls { reasoning_content: Some(rc), .. } if !rc.is_empty())
+        });
+        assert!(has_reasoning, "AssistantToolCalls 应保留 reasoning_content");
+
+        // 验证最终 assistant 消息也保留了 reasoning_content
+        let last = agent.history().last().unwrap();
+        if let ConversationMessage::Chat(cm) = last {
+            assert_eq!(cm.reasoning_content.as_deref(), Some("好的，我看到了文件"));
+        } else {
+            panic!("最后一条消息应该是 Chat");
+        }
+    }
+
+    #[tokio::test]
+    async fn clear_old_reasoning_on_new_turn() {
+        // 先运行一轮带 reasoning_content 的对话
+        let provider = MockProvider::new(vec![
+            ChatResponse {
+                text: Some("你好！".to_string()),
+                reasoning_content: Some("用户打招呼".to_string()),
+                tool_calls: vec![],
+            },
+            // 第二轮对话
+            ChatResponse {
+                text: Some("再见！".to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+        );
+
+        // 第一轮
+        agent.process_message("你好").await.unwrap();
+        // 验证第一轮 assistant 有 reasoning_content
+        let first_assistant = agent.history().iter().find(|msg| {
+            matches!(msg, ConversationMessage::Chat(cm) if cm.role == "assistant" && cm.reasoning_content.is_some())
+        });
+        assert!(first_assistant.is_some(), "第一轮应有 reasoning_content");
+
+        // 第二轮 — 新 Turn 开始时应清空旧 reasoning_content
+        agent.process_message("再见").await.unwrap();
+        // 验证旧的 reasoning_content 已被清空（第一轮的 assistant 消息）
+        let old_reasoning = agent.history().iter().any(|msg| {
+            match msg {
+                ConversationMessage::Chat(cm) if cm.role == "assistant" => {
+                    // 只有最后一条 assistant 消息可能有（但这轮没有），其余应被清空
+                    cm.reasoning_content.as_deref() == Some("用户打招呼")
+                }
+                _ => false,
+            }
+        });
+        assert!(!old_reasoning, "旧 Turn 的 reasoning_content 应被清空");
+    }
 }
