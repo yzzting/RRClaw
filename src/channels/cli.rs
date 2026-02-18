@@ -326,7 +326,7 @@ fn cmd_switch(agent: &mut Agent, config: &Config) -> Result<()> {
             model: model.clone(),
             auth_style: info.auth_style.map(|s| s.to_string()),
         };
-        save_provider_to_config(info.name, &pc)?;
+        save_provider_to_config(info.name, &pc, None)?;
 
         let new_provider = crate::providers::create_provider(&pc);
         agent.switch_provider(
@@ -337,6 +337,11 @@ fn cmd_switch(agent: &mut Agent, config: &Config) -> Result<()> {
         );
     }
 
+    // 持久化: 更新 config.toml 的 [default] 段
+    save_default_to_config(info.name, &model, None)?;
+
+    // 切换 provider 或模型后清空对话历史，避免旧上下文干扰新模型
+    agent.clear_history();
     println!("已切换到 {} / {}", info.name, model);
     Ok(())
 }
@@ -438,9 +443,34 @@ fn cmd_apikey(agent: &mut Agent, config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// 更新 config.toml 的 [default] 段（provider + model）
+/// 如果提供了 path 则使用它，否则使用 Config::config_path()
+fn save_default_to_config(provider: &str, model: &str, path: Option<&std::path::Path>) -> Result<()> {
+    let config_path = if let Some(p) = path {
+        p.to_path_buf()
+    } else {
+        Config::config_path()?
+    };
+    let content = std::fs::read_to_string(&config_path)?;
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| color_eyre::eyre::eyre!("解析配置文件失败: {}", e))?;
+
+    doc["default"]["provider"] = toml_edit::value(provider);
+    doc["default"]["model"] = toml_edit::value(model);
+
+    std::fs::write(&config_path, doc.to_string())?;
+    Ok(())
+}
+
 /// 将新 Provider 配置写入 config.toml
-fn save_provider_to_config(name: &str, pc: &ProviderConfig) -> Result<()> {
-    let config_path = Config::config_path()?;
+/// 如果提供了 path 则使用它，否则使用 Config::config_path()
+fn save_provider_to_config(name: &str, pc: &ProviderConfig, path: Option<&std::path::Path>) -> Result<()> {
+    let config_path = if let Some(p) = path {
+        p.to_path_buf()
+    } else {
+        Config::config_path()?
+    };
     let content = std::fs::read_to_string(&config_path)?;
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
@@ -633,4 +663,85 @@ pub async fn run_single(agent: &mut Agent, message: &str, memory: &SqliteMemory)
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProviderConfig;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// 创建临时 config.toml 用于测试
+    fn temp_config(content: &str) -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, content).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn save_default_to_config_updates_default_section() {
+        let (_dir, path) = temp_config(
+            r#"
+[default]
+provider = "deepseek"
+model = "deepseek-chat"
+temperature = 0.7
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key = "sk-test"
+model = "deepseek-chat"
+"#,
+        );
+
+        // 执行
+        save_default_to_config("glm", "glm-4.7", Some(&path)).unwrap();
+
+        // 验证
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml_edit::DocumentMut = content.parse().unwrap();
+
+        assert_eq!(doc["default"]["provider"].as_str(), Some("glm"));
+        assert_eq!(doc["default"]["model"].as_str(), Some("glm-4.7"));
+        // 原有 provider 配置不应被删除 - 检查能否读取到值
+        assert!(doc["providers"]["deepseek"]["base_url"].is_str());
+    }
+
+    #[test]
+    fn save_provider_to_config_adds_new_provider() {
+        let (_dir, path) = temp_config(
+            r#"
+[default]
+provider = "deepseek"
+model = "deepseek-chat"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key = "sk-test"
+model = "deepseek-chat"
+"#,
+        );
+
+        let pc = ProviderConfig {
+            base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+            api_key: "glm-key-123".to_string(),
+            model: "glm-4.7".to_string(),
+            auth_style: None,
+        };
+
+        // 执行
+        save_provider_to_config("glm", &pc, Some(&path)).unwrap();
+
+        // 验证
+        let content = fs::read_to_string(&path).unwrap();
+        let doc: toml_edit::DocumentMut = content.parse().unwrap();
+
+        assert_eq!(doc["providers"]["glm"]["base_url"].as_str(), Some("https://open.bigmodel.cn/api/paas/v4"));
+        assert_eq!(doc["providers"]["glm"]["api_key"].as_str(), Some("glm-key-123"));
+        assert_eq!(doc["providers"]["glm"]["model"].as_str(), Some("glm-4.7"));
+        // 原有配置应保留
+        assert_eq!(doc["default"]["provider"].as_str(), Some("deepseek"));
+    }
 }
