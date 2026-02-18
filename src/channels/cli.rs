@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use crate::agent::Agent;
-use crate::config::{find_provider_info, select_model, Config, ProviderConfig, PROVIDERS};
+use crate::config::{Config, ProviderConfig, PROVIDERS};
 use crate::memory::SqliteMemory;
 use crate::providers::{StreamEvent, ToolStatusKind};
 
@@ -194,11 +194,8 @@ async fn handle_slash_command(
         "config" => {
             cmd_config(agent);
         }
-        "provider" => {
-            cmd_provider(agent, config)?;
-        }
-        "model" => {
-            cmd_model(agent)?;
+        "switch" => {
+            cmd_switch(agent, config)?;
         }
         "apikey" => {
             cmd_apikey(agent, config)?;
@@ -222,33 +219,85 @@ fn cmd_config(agent: &Agent) {
     println!("  工作目录: {}", policy.workspace_dir.display());
 }
 
-/// /provider — 交互式切换 Provider
-fn cmd_provider(agent: &mut Agent, config: &Config) -> Result<()> {
+/// /switch — 一站式切换 Provider + 模型
+fn cmd_switch(agent: &mut Agent, config: &Config) -> Result<()> {
     use dialoguer::{Input, Password, Select};
 
-    println!("当前: {} ({})\n", agent.provider_name(), agent.base_url());
+    println!(
+        "当前: {} / {} ({})\n",
+        agent.provider_name(),
+        agent.model(),
+        agent.base_url()
+    );
 
-    // 构建选项列表：已知 provider + 已配置标记
+    // ① 选择 Provider
+    let current_name = agent.provider_name().to_string();
+    let mut default_idx = 0;
     let items: Vec<String> = PROVIDERS
         .iter()
-        .map(|p| {
-            if config.providers.contains_key(p.name) {
-                format!("{} (已配置 ✓)", p.name)
-            } else {
-                p.name.to_string()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut label = p.name.to_string();
+            if p.name == current_name {
+                label.push_str(" (当前 ✓)");
+                default_idx = i;
+            } else if config.providers.contains_key(p.name) {
+                label.push_str(" (已配置)");
             }
+            label
         })
         .collect();
 
-    let idx = Select::new()
+    let provider_idx = Select::new()
         .with_prompt("选择 Provider")
         .items(&items)
-        .default(0)
+        .default(default_idx)
         .interact()
         .wrap_err("选择 Provider 失败")?;
 
-    let info = &PROVIDERS[idx];
+    let info = &PROVIDERS[provider_idx];
 
+    // ② 选择模型
+    let current_model = agent.model().to_string();
+    let mut model_default = 0;
+    let mut model_items: Vec<String> = info
+        .models
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if info.name == current_name && *m == current_model {
+                model_default = i;
+                format!("{} (当前 ✓)", m)
+            } else {
+                m.to_string()
+            }
+        })
+        .collect();
+    model_items.push("自定义...".to_string());
+
+    let model_idx = Select::new()
+        .with_prompt("选择模型")
+        .items(&model_items)
+        .default(model_default)
+        .interact()
+        .wrap_err("选择模型失败")?;
+
+    let model = if model_idx < info.models.len() {
+        info.models[model_idx].to_string()
+    } else {
+        Input::new()
+            .with_prompt("输入模型名称")
+            .interact_text()
+            .wrap_err("输入模型名失败")?
+    };
+
+    // 检查是否有变化
+    if info.name == current_name && model == current_model {
+        println!("无变化。");
+        return Ok(());
+    }
+
+    // ③ 如果未配置 → 输入 API Key + Base URL → 写入 config.toml
     if let Some(pc) = config.providers.get(info.name) {
         // 已配置 → 直接切换
         let new_provider = crate::providers::create_provider(pc);
@@ -256,11 +305,7 @@ fn cmd_provider(agent: &mut Agent, config: &Config) -> Result<()> {
             new_provider,
             info.name.to_string(),
             pc.base_url.clone(),
-            pc.model.clone(),
-        );
-        println!(
-            "已切换到 {} (模型: {}, URL: {})",
-            info.name, pc.model, pc.base_url
+            model.clone(),
         );
     } else {
         // 未配置 → 引导输入
@@ -275,9 +320,6 @@ fn cmd_provider(agent: &mut Agent, config: &Config) -> Result<()> {
             .interact_text()
             .wrap_err("输入 Base URL 失败")?;
 
-        let model = select_model(info)?;
-
-        // 写入 config.toml
         let pc = ProviderConfig {
             base_url: base_url.clone(),
             api_key,
@@ -286,70 +328,16 @@ fn cmd_provider(agent: &mut Agent, config: &Config) -> Result<()> {
         };
         save_provider_to_config(info.name, &pc)?;
 
-        // 切换
         let new_provider = crate::providers::create_provider(&pc);
         agent.switch_provider(
             new_provider,
             info.name.to_string(),
-            base_url.clone(),
+            base_url,
             model.clone(),
         );
-        println!(
-            "已配置并切换到 {} (模型: {}, URL: {})",
-            info.name, model, base_url
-        );
     }
 
-    Ok(())
-}
-
-/// /model — 交互式切换模型（当前 Provider 下）
-fn cmd_model(agent: &mut Agent) -> Result<()> {
-    use dialoguer::Select;
-
-    let current_provider = agent.provider_name().to_string();
-    println!(
-        "当前: {} (Provider: {})\n",
-        agent.model(),
-        current_provider
-    );
-
-    // 查找当前 provider 的已知模型
-    let info = find_provider_info(&current_provider);
-    let models: Vec<&str> = info.map(|i| i.models).unwrap_or(&[]).to_vec();
-
-    if models.is_empty() {
-        println!("未找到 {} 的已知模型列表。", current_provider);
-        let custom: String = dialoguer::Input::new()
-            .with_prompt("输入模型名称")
-            .interact_text()
-            .wrap_err("输入模型名失败")?;
-        agent.set_model(custom.clone());
-        println!("模型已切换为: {}", custom);
-        return Ok(());
-    }
-
-    let mut items: Vec<String> = models.iter().map(|m| m.to_string()).collect();
-    items.push("自定义...".to_string());
-
-    let idx = Select::new()
-        .with_prompt("选择模型")
-        .items(&items)
-        .default(0)
-        .interact()
-        .wrap_err("选择模型失败")?;
-
-    let model = if idx < models.len() {
-        models[idx].to_string()
-    } else {
-        dialoguer::Input::new()
-            .with_prompt("输入模型名称")
-            .interact_text()
-            .wrap_err("输入模型名失败")?
-    };
-
-    agent.set_model(model.clone());
-    println!("模型已切换为: {}", model);
+    println!("已切换到 {} / {}", info.name, model);
     Ok(())
 }
 
@@ -360,7 +348,7 @@ fn cmd_apikey(agent: &mut Agent, config: &Config) -> Result<()> {
     // 列出已配置的 provider
     let configured: Vec<&String> = config.providers.keys().collect();
     if configured.is_empty() {
-        println!("没有已配置的 Provider。请先用 /provider 添加。");
+        println!("没有已配置的 Provider。请先用 /switch 添加。");
         return Ok(());
     }
 
@@ -492,12 +480,10 @@ fn print_help() {
     println!("  /new          新建对话（清空历史）");
     println!("  /clear        清屏");
     println!("  /config       显示当前配置");
-    println!("  /provider     切换 Provider（交互式选择）");
-    println!("  /model        切换模型（交互式选择）");
+    println!("  /switch       切换 Provider + 模型");
     println!("  /apikey       修改 API Key 或 Base URL");
     println!();
     println!("  exit, quit    退出");
-    println!("  clear         清屏");
     println!();
     println!("其他输入会发送给 AI 处理。");
 }
