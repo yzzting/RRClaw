@@ -145,7 +145,11 @@ impl CompatibleProvider {
             }
         };
 
-        let text = choice.message.content.clone();
+        // 优先 content，回退到 reasoning_content（DeepSeek Reasoner）
+        let text = choice.message.content.clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| choice.message.reasoning_content.clone()
+                .filter(|s| !s.is_empty()));
         let tool_calls = choice
             .message
             .tool_calls
@@ -286,12 +290,14 @@ impl Provider for CompatibleProvider {
                 };
 
                 if let Some(choice) = parsed.choices.first() {
-                    // 文本增量
-                    if let Some(content) = &choice.delta.content {
-                        if !content.is_empty() {
-                            full_text.push_str(content);
-                            let _ = tx.send(StreamEvent::Text(content.clone())).await;
-                        }
+                    // 文本增量（优先 content，回退到 reasoning_content）
+                    let text_delta = choice.delta.content.as_deref()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| choice.delta.reasoning_content.as_deref()
+                            .filter(|s| !s.is_empty()));
+                    if let Some(content) = text_delta {
+                        full_text.push_str(content);
+                        let _ = tx.send(StreamEvent::Text(content.to_string())).await;
                     }
 
                     // tool call 增量
@@ -380,6 +386,8 @@ struct OpenAIChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAIMessage {
     content: Option<String>,
+    /// DeepSeek Reasoner 的思考过程
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
@@ -410,6 +418,8 @@ struct SSEStreamChoice {
 #[derive(Debug, Deserialize)]
 struct SSEDelta {
     content: Option<String>,
+    /// DeepSeek Reasoner 的思考过程（可能包含最终回答）
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<SSEToolCallDelta>>,
 }
 
@@ -528,6 +538,7 @@ mod tests {
             choices: vec![OpenAIChoice {
                 message: OpenAIMessage {
                     content: Some("Hello!".to_string()),
+                    reasoning_content: None,
                     tool_calls: None,
                 },
             }],
@@ -543,6 +554,7 @@ mod tests {
             choices: vec![OpenAIChoice {
                 message: OpenAIMessage {
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![OpenAIToolCall {
                         id: "call_abc".to_string(),
                         function: OpenAIFunction {
