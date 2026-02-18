@@ -165,6 +165,7 @@ impl Agent {
         self.history.push(ConversationMessage::Chat(ChatMessage {
             role: "user".to_string(),
             content: user_msg.to_string(),
+            reasoning_content: None,
         }));
 
         // 4. Tool call 循环
@@ -176,6 +177,7 @@ impl Agent {
             let mut messages = vec![ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: system_prompt.clone(),
+                reasoning_content: None,
             })];
             messages.extend(self.history.clone());
 
@@ -204,6 +206,7 @@ impl Agent {
                 self.history.push(ConversationMessage::Chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: final_text.clone(),
+                    reasoning_content: None,
                 }));
                 break;
             }
@@ -212,6 +215,7 @@ impl Agent {
             self.history
                 .push(ConversationMessage::AssistantToolCalls {
                     text: response.text.clone(),
+                    reasoning_content: None,
                     tool_calls: response.tool_calls.clone(),
                 });
 
@@ -283,6 +287,7 @@ impl Agent {
         self.history.push(ConversationMessage::Chat(ChatMessage {
             role: "user".to_string(),
             content: user_msg.to_string(),
+            reasoning_content: None,
         }));
 
         // 4. Tool call 循环
@@ -293,6 +298,7 @@ impl Agent {
             let mut messages = vec![ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: system_prompt.clone(),
+                reasoning_content: None,
             })];
             messages.extend(self.history.clone());
 
@@ -323,6 +329,7 @@ impl Agent {
                 self.history.push(ConversationMessage::Chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: final_text.clone(),
+                    reasoning_content: None,
                 }));
                 break;
             }
@@ -336,6 +343,7 @@ impl Agent {
             self.history
                 .push(ConversationMessage::AssistantToolCalls {
                     text: response.text.clone(),
+                    reasoning_content: None,
                     tool_calls: response.tool_calls.clone(),
                 });
 
@@ -598,6 +606,7 @@ mod tests {
             if responses.is_empty() {
                 Ok(ChatResponse {
                     text: Some("默认回复".to_string()),
+                    reasoning_content: None,
                     tool_calls: vec![],
                 })
             } else {
@@ -668,6 +677,7 @@ mod tests {
     async fn simple_text_response() {
         let provider = MockProvider::new(vec![ChatResponse {
             text: Some("你好！".to_string()),
+            reasoning_content: None,
             tool_calls: vec![],
         }]);
 
@@ -692,6 +702,7 @@ mod tests {
             // First response: tool call
             ChatResponse {
                 text: Some("让我查看一下".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
@@ -701,6 +712,7 @@ mod tests {
             // Second response: final text
             ChatResponse {
                 text: Some("目录中有 file.txt".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![],
             },
         ]);
@@ -730,6 +742,7 @@ mod tests {
         let provider = MockProvider::new(vec![
             ChatResponse {
                 text: None,
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "nonexistent".to_string(),
@@ -738,6 +751,7 @@ mod tests {
             },
             ChatResponse {
                 text: Some("抱歉".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![],
             },
         ]);
@@ -798,6 +812,7 @@ mod tests {
         let provider = MockProvider::new(vec![
             ChatResponse {
                 text: None,
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
@@ -806,6 +821,7 @@ mod tests {
             },
             ChatResponse {
                 text: Some("执行完成".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![],
             },
         ]);
@@ -841,6 +857,7 @@ mod tests {
         let provider = MockProvider::new(vec![
             ChatResponse {
                 text: None,
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
@@ -849,6 +866,7 @@ mod tests {
             },
             ChatResponse {
                 text: Some("好的，已取消".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![],
             },
         ]);
@@ -884,6 +902,7 @@ mod tests {
         let provider = MockProvider::new(vec![
             ChatResponse {
                 text: None,
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
@@ -892,6 +911,7 @@ mod tests {
             },
             ChatResponse {
                 text: Some("完成".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![],
             },
         ]);
@@ -939,6 +959,7 @@ mod tests {
             agent.history.push(ConversationMessage::Chat(ChatMessage {
                 role: "user".to_string(),
                 content: format!("msg {}", i),
+                reasoning_content: None,
             }));
         }
         assert_eq!(agent.history.len(), 60);

@@ -38,7 +38,7 @@ impl CompatibleProvider {
 
         for msg in messages {
             match msg {
-                ConversationMessage::Chat(ChatMessage { role, content }) => {
+                ConversationMessage::Chat(ChatMessage { role, content, .. }) => {
                     let mut obj = serde_json::json!({
                         "role": role,
                         "content": content,
@@ -49,7 +49,7 @@ impl CompatibleProvider {
                     }
                     result.push(obj);
                 }
-                ConversationMessage::AssistantToolCalls { text, tool_calls } => {
+                ConversationMessage::AssistantToolCalls { text, tool_calls, .. } => {
                     let mut obj = serde_json::json!({
                         "role": "assistant",
                         "reasoning_content": serde_json::json!(""),
@@ -140,6 +140,7 @@ impl CompatibleProvider {
             None => {
                 return ChatResponse {
                     text: None,
+                    reasoning_content: None,
                     tool_calls: vec![],
                 }
             }
@@ -166,7 +167,7 @@ impl CompatibleProvider {
             })
             .unwrap_or_default();
 
-        ChatResponse { text, tool_calls }
+        ChatResponse { text, reasoning_content: None, tool_calls }
     }
 }
 
@@ -356,6 +357,7 @@ impl Provider for CompatibleProvider {
             } else {
                 Some(full_text)
             },
+            reasoning_content: None,
             tool_calls,
         };
 
@@ -476,10 +478,12 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: "You are helpful.".to_string(),
+                reasoning_content: None,
             }),
             ConversationMessage::Chat(ChatMessage {
                 role: "user".to_string(),
                 content: "Hello".to_string(),
+                reasoning_content: None,
             }),
         ];
         let built = CompatibleProvider::build_messages(&msgs);
@@ -493,6 +497,7 @@ mod tests {
         let msgs = vec![
             ConversationMessage::AssistantToolCalls {
                 text: Some("Let me check.".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),

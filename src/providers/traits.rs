@@ -8,6 +8,9 @@ use tokio::sync::mpsc;
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// DeepSeek/MiniMax 思考模式的推理内容（同一 Turn 内多轮 tool call 需回传）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 /// 模型请求的工具调用
@@ -22,6 +25,8 @@ pub struct ToolCall {
 #[derive(Debug, Clone)]
 pub struct ChatResponse {
     pub text: Option<String>,
+    /// DeepSeek/MiniMax 思考模式的推理内容
+    pub reasoning_content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
 }
 
@@ -33,6 +38,8 @@ pub enum ConversationMessage {
     /// 助手发起的 tool call 响应
     AssistantToolCalls {
         text: Option<String>,
+        /// DeepSeek/MiniMax 思考模式的推理内容（同一 Turn 内多轮 tool call 需回传）
+        reasoning_content: Option<String>,
         tool_calls: Vec<ToolCall>,
     },
     /// 工具执行结果

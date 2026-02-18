@@ -439,9 +439,11 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "user".to_string(),
                 content: "你好".to_string(),
+                reasoning_content: None,
             }),
             ConversationMessage::AssistantToolCalls {
                 text: Some("让我查看".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "shell".to_string(),
@@ -455,6 +457,7 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "assistant".to_string(),
                 content: "目录中有 file.txt".to_string(),
+                reasoning_content: None,
             }),
         ];
 
@@ -492,6 +495,7 @@ mod tests {
         let history1 = vec![ConversationMessage::Chat(ChatMessage {
             role: "user".to_string(),
             content: "first".to_string(),
+            reasoning_content: None,
         })];
         mem.save_conversation_history(session_id, &history1)
             .await
@@ -501,10 +505,12 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "user".to_string(),
                 content: "second".to_string(),
+                reasoning_content: None,
             }),
             ConversationMessage::Chat(ChatMessage {
                 role: "assistant".to_string(),
                 content: "reply".to_string(),
+                reasoning_content: None,
             }),
         ];
         mem.save_conversation_history(session_id, &history2)

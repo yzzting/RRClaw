@@ -39,7 +39,7 @@ impl ClaudeProvider {
 
         for msg in messages {
             match msg {
-                ConversationMessage::Chat(ChatMessage { role, content }) => {
+                ConversationMessage::Chat(ChatMessage { role, content, .. }) => {
                     if role == "system" {
                         system_parts.push(content.clone());
                     } else {
@@ -49,7 +49,7 @@ impl ClaudeProvider {
                         }));
                     }
                 }
-                ConversationMessage::AssistantToolCalls { text, tool_calls } => {
+                ConversationMessage::AssistantToolCalls { text, tool_calls, .. } => {
                     let mut content = Vec::new();
                     if let Some(text) = text {
                         content.push(serde_json::json!({
@@ -175,7 +175,7 @@ impl ClaudeProvider {
             Some(text_parts.join(""))
         };
 
-        ChatResponse { text, tool_calls }
+        ChatResponse { text, reasoning_content: None, tool_calls }
     }
 }
 
@@ -358,7 +358,7 @@ impl Provider for ClaudeProvider {
             Some(text_parts.join(""))
         };
 
-        let response = ChatResponse { text, tool_calls };
+        let response = ChatResponse { text, reasoning_content: None, tool_calls };
         let _ = tx.send(StreamEvent::Done(response.clone())).await;
 
         debug!(
@@ -409,10 +409,12 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: "You are RRClaw.".to_string(),
+                reasoning_content: None,
             }),
             ConversationMessage::Chat(ChatMessage {
                 role: "user".to_string(),
                 content: "Hello".to_string(),
+                reasoning_content: None,
             }),
         ];
         let (system, claude_msgs) = ClaudeProvider::extract_system(&msgs);
@@ -427,10 +429,12 @@ mod tests {
             ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: "Part 1".to_string(),
+                reasoning_content: None,
             }),
             ConversationMessage::Chat(ChatMessage {
                 role: "system".to_string(),
                 content: "Part 2".to_string(),
+                reasoning_content: None,
             }),
         ];
         let (system, _) = ClaudeProvider::extract_system(&msgs);
@@ -442,6 +446,7 @@ mod tests {
         let msgs = vec![
             ConversationMessage::AssistantToolCalls {
                 text: Some("Checking...".to_string()),
+                reasoning_content: None,
                 tool_calls: vec![ToolCall {
                     id: "toolu_1".to_string(),
                     name: "shell".to_string(),
