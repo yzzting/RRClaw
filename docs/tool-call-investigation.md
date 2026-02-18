@@ -403,11 +403,13 @@ ALTER TABLE conversation_history ADD COLUMN reasoning_content TEXT;
 
 日志文件记录了完整的 API 请求/响应和工具执行过程，是验证 tool call 最可靠的方式。
 
-```bash
-# 开启详细日志运行 rrclaw
-RUST_LOG=rrclaw=debug cargo run -- agent
+文件日志**默认就是 `debug` 级别**（输出到 `~/.rrclaw/logs/rrclaw.log.*`），无需设环境变量即可查看工具执行记录。
 
-# 另一个终端实时查看日志
+```bash
+# 正常运行 rrclaw
+cargo run -- agent
+
+# 另一个终端实时查看日志（默认 debug 级别，已包含工具执行记录）
 tail -f ~/.rrclaw/logs/rrclaw.log.*
 ```
 
@@ -419,7 +421,7 @@ rrclaw::agent::loop_: 执行工具: shell args={"command":"ls"}
 rrclaw::agent::loop_: 工具结果: file1.txt...
 ```
 
-**验证 reasoning_content 传递**: 使用 `RUST_LOG=rrclaw=trace` 可以看到完整请求体:
+**验证 reasoning_content 传递**: 需要 `trace` 级别才能看到完整请求体/响应体:
 
 ```bash
 RUST_LOG=rrclaw=trace cargo run -- agent
