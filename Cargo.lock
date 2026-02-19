@@ -2435,6 +2435,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "shell-words",
  "tantivy",
  "tantivy-jieba",
  "teloxide",

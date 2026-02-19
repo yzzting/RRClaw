@@ -15,7 +15,7 @@ impl Tool for GitTool {
     }
 
     fn description(&self) -> &str {
-        "Git 版本控制（推荐，有安全保护）。支持 action: status, diff, log, add, commit, branch, checkout, push。\
+        "Git 版本控制（推荐，有安全保护）。支持 action: status, diff, log, add, commit, branch, checkout, push, pull, fetch。\
          比 shell 工具更安全：强制 push/checkout 会被拦截，action 白名单保护。"
     }
 
@@ -25,12 +25,12 @@ impl Tool for GitTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "diff", "log", "add", "commit", "branch", "checkout", "push"],
+                    "enum": ["status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch"],
                     "description": "Git 操作类型"
                 },
                 "args": {
                     "type": "string",
-                    "description": "操作参数。如: diff 的文件路径, commit 的 -m \"message\", add 的文件列表(空格分隔), branch 的分支名, checkout 的目标分支, log 的 --oneline -10, push 的 origin main 等。可留空使用默认行为。"
+                    "description": "操作参数。如: diff 的文件路径, commit 的 -m \"message\", add 的文件列表(空格分隔), branch 的分支名, checkout 的目标分支, log 的 --oneline -10, push/pull 的 origin main 等。可留空使用默认行为。"
                 }
             },
             "required": ["action"]
@@ -128,7 +128,7 @@ impl Tool for GitTool {
 /// 根据 action + 额外参数构造 git 命令参数列表
 fn build_git_args(action: &str, extra: &str) -> Result<Vec<String>> {
     // 验证 action 合法性
-    let valid_actions = ["status", "diff", "log", "add", "commit", "branch", "checkout", "push"];
+    let valid_actions = ["status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch"];
     if !valid_actions.contains(&action) {
         return Err(eyre!("未知 git action: '{}'。支持: {}", action, valid_actions.join(", ")));
     }
@@ -288,6 +288,6 @@ mod tests {
         let actions = spec.parameters["properties"]["action"]["enum"]
             .as_array()
             .unwrap();
-        assert_eq!(actions.len(), 8);
+        assert_eq!(actions.len(), 10);
     }
 }
