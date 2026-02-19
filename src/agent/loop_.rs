@@ -12,6 +12,110 @@ use crate::tools::Tool;
 const MAX_TOOL_ITERATIONS: usize = 10;
 const MAX_HISTORY_SIZE: usize = 50;
 
+/// Phase 1 路由结果
+#[derive(Debug, Clone, PartialEq)]
+pub enum RouteResult {
+    /// 命中一个或多个 skill，携带 skill 名称列表
+    Skills(Vec<String>),
+    /// 意图清晰，无需 skill，直接进 Phase 2 执行
+    Direct,
+    /// 意图模糊，需要向用户澄清，携带澄清问题
+    NeedClarification(String),
+}
+
+/// 从可能包含 markdown 代码块的文本中提取 JSON 字符串
+fn extract_json(text: &str) -> &str {
+    let text = text.trim();
+    // 处理 ```json ... ``` 或 ``` ... ```
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            return &text[start..=end];
+        }
+    }
+    text
+}
+
+/// 解析 Phase 1 LLM 输出，独立纯函数（便于测试）
+fn parse_route_result(text: &str) -> RouteResult {
+    // 从文本中提取 JSON（LLM 有时会在 JSON 前后加 markdown ```）
+    let json_str = extract_json(text);
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        debug!("Phase 1 输出解析失败，降级为 Direct: {:?}", text);
+        return RouteResult::Direct;
+    };
+
+    let skills = value["skills"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if !skills.is_empty() {
+        return RouteResult::Skills(skills);
+    }
+
+    let direct = value["direct"].as_bool().unwrap_or(false);
+    if direct {
+        return RouteResult::Direct;
+    }
+
+    if let Some(question) = value["question"].as_str() {
+        if !question.is_empty() {
+            return RouteResult::NeedClarification(question.to_string());
+        }
+    }
+
+    // 兜底：无法判断时降级为 Direct
+    RouteResult::Direct
+}
+
+/// 构造 Phase 1 的 system prompt，极简
+fn build_routing_prompt(skills: &[SkillMeta]) -> String {
+    let mut prompt = String::new();
+
+    // [1] 身份
+    prompt.push_str("你是 RRClaw 的路由助手。你的唯一任务是分析用户消息，决定需要加载哪些行为指南（skill）。\n\n");
+
+    // [2] 安全约束（硬编码，不可跳过）
+    prompt.push_str("【约束】\n");
+    prompt.push_str("- 禁止调用任何工具\n");
+    prompt.push_str("- 只输出 JSON，不做其他任何操作\n\n");
+
+    // [3] 可用 Skill 目录（L1 元数据）
+    if skills.is_empty() {
+        prompt.push_str("【可用 Skill】\n暂无可用 skill。\n\n");
+    } else {
+        prompt.push_str("【可用 Skill】\n");
+        for skill in skills {
+            prompt.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+        }
+        prompt.push('\n');
+    }
+
+    // [4] 输出格式说明
+    prompt.push_str("【输出格式】\n");
+    prompt.push_str("必须输出合法 JSON，三种情况之一：\n\n");
+    prompt.push_str("1. 需要加载 skill（意图明确且有匹配 skill）：\n");
+    prompt.push_str("   {\"skills\": [\"skill-name\"], \"direct\": false}\n\n");
+    prompt.push_str("2. 无需 skill，意图清晰可直接执行：\n");
+    prompt.push_str("   {\"skills\": [], \"direct\": true}\n\n");
+    prompt.push_str("3. 意图模糊，需要向用户澄清（仅在真正无法判断时使用）：\n");
+    prompt.push_str("   {\"skills\": [], \"direct\": false, \"question\": \"你的澄清问题\"}\n\n");
+
+    // [5] 判断原则
+    prompt.push_str("【判断原则】\n");
+    prompt.push_str("- 用户意图清晰时，即使没有匹配的 skill，也应选择 direct: true\n");
+    prompt.push_str("- skill 是增强，不是门槛——没有 skill 可以匹配时不要问用户\n");
+    prompt.push_str("- 只有用户表达含糊、继续执行会走错方向时，才返回 question\n");
+    prompt.push_str("- question 字段使用中文，简洁明确\n");
+
+    prompt
+}
+
 /// 工具执行确认回调
 /// 参数: (tool_name, tool_arguments) → 返回 true 表示允许执行
 pub type ConfirmFn = Box<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
@@ -30,6 +134,8 @@ pub struct Agent {
     confirm_fn: Option<ConfirmFn>,
     /// L1 元数据，用于 system prompt 技能列表（不含 SkillTool 本身）
     skills_meta: Vec<SkillMeta>,
+    /// Phase 1 路由后加载的 skill 内容，每次 process_message 重置
+    routed_skill_content: Option<String>,
 }
 
 impl Agent {
@@ -57,6 +163,7 @@ impl Agent {
             history: Vec::new(),
             confirm_fn: None,
             skills_meta,
+            routed_skill_content: None,
         }
     }
 
@@ -74,6 +181,67 @@ impl Agent {
     /// 设置工具执行确认回调（用于 Supervised 模式）
     pub fn set_confirm_fn(&mut self, f: ConfirmFn) {
         self.confirm_fn = Some(f);
+    }
+
+    /// Phase 1 路由：调用轻量 LLM 决定需要加载哪些 skill
+    async fn route(&self, user_message: &str) -> Result<RouteResult> {
+        let routing_prompt = build_routing_prompt(&self.skills_meta);
+
+        let messages = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "system".to_string(),
+                content: routing_prompt,
+                reasoning_content: None,
+            }),
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: user_message.to_string(),
+                reasoning_content: None,
+            }),
+        ];
+
+        // Phase 1 不传工具，温度极低保证输出稳定
+        let response = self
+            .provider
+            .chat_with_tools(
+                &messages,
+                &[], // 空工具列表，Phase 1 禁止工具调用
+                &self.model,
+                0.1, // 低温度，路由输出要确定性
+            )
+            .await;
+
+        match response {
+            Err(e) => {
+                // Phase 1 调用失败，降级为 Direct，不阻断请求
+                debug!("Phase 1 路由失败，降级为 Direct: {}", e);
+                Ok(RouteResult::Direct)
+            }
+            Ok(resp) => {
+                let text = resp.text.unwrap_or_default();
+                Ok(parse_route_result(&text))
+            }
+        }
+    }
+
+    /// 加载 skill L2 内容，存到临时字段，Phase 2 构建 system prompt 时使用
+    fn inject_routed_skills(&mut self, skill_names: &[String]) {
+        let mut content = String::new();
+        for name in skill_names {
+            // 使用 src/skills/mod.rs 中的 load_skill_content(name, skills) -> Result<SkillContent>
+            // SkillContent.instructions 是去除 frontmatter 后的正文
+            if let Ok(skill_content) = crate::skills::load_skill_content(name, &self.skills_meta) {
+                content.push_str(&format!(
+                    "\n\n---\n## Skill: {}\n{}",
+                    name, skill_content.instructions
+                ));
+            }
+        }
+        if !content.is_empty() {
+            self.routed_skill_content = Some(content);
+        } else {
+            self.routed_skill_content = None;
+        }
     }
 
     /// 获取当前对话历史（用于持久化）
@@ -190,6 +358,26 @@ impl Agent {
         // 0. 新 Turn: 清空旧 reasoning_content（节省 token，DeepSeek/MiniMax 文档建议）
         self.clear_old_reasoning_content();
 
+        // ─── Phase 1: 路由 ───────────────────────────────────────────
+        let route_result = self.route(user_msg).await?;
+
+        match route_result {
+            RouteResult::NeedClarification(question) => {
+                // 直接返回澄清问题字符串，不写入 history，不执行任何工具
+                // CLI/Telegram 层收到后直接展示给用户
+                return Ok(question);
+            }
+            RouteResult::Skills(skill_names) => {
+                // 加载对应 skill 的 L2 内容，注入到本次 Phase 2 的 system prompt
+                self.inject_routed_skills(&skill_names);
+            }
+            RouteResult::Direct => {
+                // 清空本次临时注入的 skill（上一轮可能有残留）
+                self.routed_skill_content = None;
+            }
+        }
+
+        // ─── Phase 2: 正常 Agent Loop ────────────────────────────────
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
@@ -328,6 +516,26 @@ impl Agent {
         // 0. 新 Turn: 清空旧 reasoning_content（节省 token，DeepSeek/MiniMax 文档建议）
         self.clear_old_reasoning_content();
 
+        // ─── Phase 1: 路由 ───────────────────────────────────────────
+        let route_result = self.route(user_msg).await?;
+
+        match route_result {
+            RouteResult::NeedClarification(question) => {
+                // 直接返回澄清问题字符串，不写入 history，不执行任何工具
+                // CLI/Telegram 层收到后直接展示给用户
+                return Ok(question);
+            }
+            RouteResult::Skills(skill_names) => {
+                // 加载对应 skill 的 L2 内容，注入到本次 Phase 2 的 system prompt
+                self.inject_routed_skills(&skill_names);
+            }
+            RouteResult::Direct => {
+                // 清空本次临时注入的 skill（上一轮可能有残留）
+                self.routed_skill_content = None;
+            }
+        }
+
+        // ─── Phase 2: 正常 Agent Loop ────────────────────────────────
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
@@ -572,6 +780,11 @@ impl Agent {
             parts.push(memory_section);
         }
 
+        // [4.5] 已路由的 skill L2 行为指南（Phase 1 结果，每轮重置）
+        if let Some(skill_content) = &self.routed_skill_content {
+            parts.push(format!("[行为指南]\n{}", skill_content));
+        }
+
         // [5] 环境信息（精简，详情通过 self_info 工具查询）
         let workspace = self.policy.workspace_dir.display();
         let env_info = format!(
@@ -671,6 +884,7 @@ mod tests {
     use super::*;
     use crate::memory::MemoryEntry;
     use crate::providers::{ChatResponse, ToolCall};
+    use crate::skills::SkillSource;
     use crate::tools::ToolResult;
     use std::path::PathBuf;
 
@@ -1286,5 +1500,98 @@ mod tests {
             }
         });
         assert!(!old_reasoning, "旧 Turn 的 reasoning_content 应被清空");
+    }
+
+    // --- Phase 1 路由测试 ---
+
+    #[test]
+    fn parse_route_result_skills() {
+        let result = parse_route_result(r#"{"skills": ["git-commit"], "direct": false}"#);
+        assert!(matches!(result, RouteResult::Skills(s) if s == ["git-commit"]));
+    }
+
+    #[test]
+    fn parse_route_result_direct() {
+        let result = parse_route_result(r#"{"skills": [], "direct": true}"#);
+        assert!(matches!(result, RouteResult::Direct));
+    }
+
+    #[test]
+    fn parse_route_result_clarification() {
+        let result = parse_route_result(
+            r#"{"skills": [], "direct": false, "question": "你是想查看还是提交？"}"#
+        );
+        assert!(matches!(result, RouteResult::NeedClarification(q) if q.contains("查看")));
+    }
+
+    #[test]
+    fn parse_route_result_fallback_on_invalid_json() {
+        // 解析失败时降级为 Direct
+        let result = parse_route_result("这不是 JSON");
+        assert!(matches!(result, RouteResult::Direct));
+    }
+
+    #[test]
+    fn parse_route_result_strips_markdown_code_block() {
+        let result = parse_route_result("```json\n{\"skills\": [], \"direct\": true}\n```");
+        assert!(matches!(result, RouteResult::Direct));
+    }
+
+    #[test]
+    fn parse_route_result_multiple_skills() {
+        let result = parse_route_result(
+            r#"{"skills": ["git-commit", "code-review"], "direct": false}"#
+        );
+        match result {
+            RouteResult::Skills(s) => assert_eq!(s.len(), 2),
+            _ => panic!("expected Skills"),
+        }
+    }
+
+    #[test]
+    fn build_routing_prompt_no_tools() {
+        let skills = vec![];
+        let prompt = build_routing_prompt(&skills);
+        // Phase 1 prompt 不包含工具 schema
+        assert!(!prompt.contains("shell"));
+        assert!(!prompt.contains("file_read"));
+        assert!(prompt.contains("JSON"));
+    }
+
+    #[test]
+    fn build_routing_prompt_contains_skill_names() {
+        // SkillMeta 的实际字段：name, description, tags, source, path（无 content_hash）
+        // SkillSource 枚举值为 BuiltIn（大写 I），不是 Builtin
+        let skills = vec![SkillMeta {
+            name: "git-commit".to_string(),
+            description: "Git 提交规范（用户提到提交代码时加载）".to_string(),
+            tags: vec![],
+            source: SkillSource::BuiltIn,
+            path: None,
+        }];
+        let prompt = build_routing_prompt(&skills);
+        assert!(prompt.contains("git-commit"));
+        assert!(prompt.contains("Git 提交规范"));
+    }
+
+    #[test]
+    fn build_routing_prompt_empty_skills() {
+        let skills = vec![];
+        let prompt = build_routing_prompt(&skills);
+        assert!(prompt.contains("暂无可用 skill"));
+    }
+
+    #[test]
+    fn extract_json_strips_markdown() {
+        let text = "```json\n{\"direct\": true}\n```";
+        let json = extract_json(text);
+        assert!(json.contains("direct"));
+    }
+
+    #[test]
+    fn extract_json_handles_plain_json() {
+        let text = r#"{"direct": true}"#;
+        let json = extract_json(text);
+        assert!(json.contains("direct"));
     }
 }
