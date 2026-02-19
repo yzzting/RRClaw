@@ -67,6 +67,7 @@ impl AgentFactory {
             provider_config.base_url.clone(),
             self.config.default.model.clone(),
             self.config.default.temperature,
+            vec![], // Telegram 暂不加载 skills
         ))
     }
 }

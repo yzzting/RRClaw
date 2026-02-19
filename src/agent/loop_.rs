@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use crate::memory::{Memory, MemoryCategory};
 use crate::providers::{ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec, ToolStatusKind};
 use crate::security::{AutonomyLevel, SecurityPolicy};
+use crate::skills::SkillMeta;
 use crate::tools::Tool;
 
 const MAX_TOOL_ITERATIONS: usize = 10;
@@ -27,6 +28,8 @@ pub struct Agent {
     temperature: f64,
     history: Vec<ConversationMessage>,
     confirm_fn: Option<ConfirmFn>,
+    /// L1 元数据，用于 system prompt 技能列表（不含 SkillTool 本身）
+    skills_meta: Vec<SkillMeta>,
 }
 
 impl Agent {
@@ -40,6 +43,7 @@ impl Agent {
         base_url: String,
         model: String,
         temperature: f64,
+        skills_meta: Vec<SkillMeta>,
     ) -> Self {
         Self {
             provider,
@@ -52,7 +56,19 @@ impl Agent {
             temperature,
             history: Vec::new(),
             confirm_fn: None,
+            skills_meta,
         }
+    }
+
+    /// 手动注入技能上下文（/skill <name> 用）
+    /// 将技能指令作为 user 消息推入 history，LLM 下一轮自然遵循
+    pub fn inject_skill_context(&mut self, skill_name: &str, instructions: &str) {
+        let msg = ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: format!("[技能指令: {}]\n{}", skill_name, instructions),
+            reasoning_content: None,
+        });
+        self.history.push(msg);
     }
 
     /// 设置工具执行确认回调（用于 Supervised 模式）
@@ -494,6 +510,22 @@ impl Agent {
             parts.push(tools_desc);
         }
 
+        // [2.5] 可用技能列表（L1 元数据，仅当有 skills 时注入）
+        // 排除 SkillTool 自身（它已在 [2] 工具描述中）
+        let display_skills: Vec<&SkillMeta> = self
+            .skills_meta
+            .iter()
+            .filter(|s| s.name != "skill")
+            .collect();
+        if !display_skills.is_empty() {
+            let mut skills_section =
+                "[可用技能]（需要时用 skill 工具加载详细指令）\n".to_string();
+            for skill in &display_skills {
+                skills_section.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+            }
+            parts.push(skills_section);
+        }
+
         // [3] 安全规则
         let security_rules = match self.policy.autonomy {
             AutonomyLevel::ReadOnly => "当前为只读模式，不要尝试执行任何工具。",
@@ -691,6 +723,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         let reply = agent.process_message("你好").await.unwrap();
@@ -732,6 +765,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         let reply = agent.process_message("列出文件").await.unwrap();
@@ -766,6 +800,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         let reply = agent.process_message("test").await.unwrap();
@@ -783,6 +818,7 @@ mod tests {
             "http://test".to_string(),
             "test".to_string(),
             0.7,
+            vec![],
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("RRClaw"));
@@ -803,6 +839,7 @@ mod tests {
             "http://test".to_string(),
             "test".to_string(),
             0.7,
+            vec![],
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("shell"));
@@ -819,6 +856,7 @@ mod tests {
             "http://test".to_string(),
             "test".to_string(),
             0.7,
+            vec![],
         );
         let prompt = agent.build_system_prompt(&[]);
         // 新决策原则应包含关键条目
@@ -842,6 +880,7 @@ mod tests {
             "http://test".to_string(),
             "test".to_string(),
             0.7,
+            vec![],
         );
         let prompt = agent.build_system_prompt(&[]);
         // 精简后应明显短于旧版（旧版约 800+ 字符）
@@ -889,6 +928,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         // 确认回调: 始终允许
@@ -934,6 +974,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         // 确认回调: 始终拒绝
@@ -977,6 +1018,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         // 设置一个会 panic 的确认回调（不应被调用）
@@ -999,6 +1041,7 @@ mod tests {
             "http://test".to_string(),
             "test".to_string(),
             0.7,
+            vec![],
         );
 
         for i in 0..60 {
@@ -1047,6 +1090,7 @@ mod tests {
             "http://test".to_string(),
             "deepseek-reasoner".to_string(),
             0.7,
+            vec![],
         );
 
         let reply = agent.process_message("列出文件").await.unwrap();
@@ -1093,6 +1137,7 @@ mod tests {
             "http://test".to_string(),
             "test-model".to_string(),
             0.7,
+            vec![],
         );
 
         // 第一轮
