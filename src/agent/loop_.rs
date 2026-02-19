@@ -514,47 +514,26 @@ impl Agent {
             parts.push(memory_section);
         }
 
-        // [5] 环境信息 + 安全策略详情
+        // [5] 环境信息（精简，详情通过 self_info 工具查询）
         let workspace = self.policy.workspace_dir.display();
-        let whitelist = self.policy.allowed_commands.join(", ");
-        let mut env_info = format!(
-            "工作目录: {}\n当前时间: {}\nShell 命令白名单: [{}]",
+        let env_info = format!(
+            "工作目录: {}\n当前时间: {}",
             workspace,
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-            whitelist,
         );
-        if !self.policy.blocked_paths.is_empty() {
-            let blocked: Vec<String> = self.policy.blocked_paths.iter()
-                .map(|p| p.display().to_string())
-                .collect();
-            env_info.push_str(&format!("\n禁止访问路径: [{}]", blocked.join(", ")));
-        }
         parts.push(env_info);
 
-        // [6] 工具结果格式说明（让 LLM 理解并兜底）
+        // [6] 决策原则（替代原"行为准则"+"工具结果格式"，教模型怎么决策）
         parts.push(concat!(
-            "[工具结果格式]\n",
-            "- 成功: 直接返回工具输出内容\n",
-            "- 失败: 以 [失败] 开头，可能包含 [部分输出] 段\n",
-            "- 错误: 以 [错误] 开头，表示系统级异常\n",
-            "\n",
-            "[工具使用规则]\n",
-            "- 命令超时不要盲目重试，先告知用户\n",
-            "- 失败时分析 [部分输出] 定位问题，而不是重试相同命令\n",
-            "- 一个目标最多尝试 3 种不同方式，之后向用户说明情况\n",
-            "- file_read 返回空字符串表示文件为空，不是错误",
-        ).to_string());
-
-        // [7] 行为准则（prompt engineering，减少对模型理解能力的依赖）
-        parts.push(concat!(
-            "[行为准则]\n",
-            "- 对话历史已经在消息上下文中，不要用 shell 命令查看聊天记录或命令历史\n",
-            "- 优先从上下文已有信息回答问题，只在信息不足时才使用工具\n",
-            "- 使用工具前先说明意图和原因，不要无解释地直接调用\n",
-            "- 每次只调用必要的工具，不要一次发起大量无关的工具调用\n",
-            "- 如果用户的问题可以直接回答（如解释概念、分析代码），不需要调用工具\n",
-            "- 不确定该怎么做时，先询问用户而不是猜测性地执行命令\n",
-            "- 始终用中文回复用户，除非用户明确使用其他语言",
+            "[决策原则]\n",
+            "1. 先查后做: 不确定的信息（路径、配置、能力）先用 self_info 工具查询，不要猜测\n",
+            "2. 不知道就问: 如果查不到也推理不出，直接问用户，不要盲目尝试\n",
+            "3. 说明意图: 调用工具前简短说明为什么需要这个工具\n",
+            "4. 失败时反思: 工具失败后先分析原因，再决定下一步\n",
+            "   - 第 1 次失败: 分析原因，换一种方式\n",
+            "   - 第 2 次失败: 向用户说明情况，询问建议\n",
+            "   - 不要同一个目标尝试超过 3 次\n",
+            "5. 用中文回复，除非用户使用其他语言",
         ).to_string());
 
         parts.join("\n\n")
@@ -827,6 +806,51 @@ mod tests {
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("shell"));
+    }
+
+    #[test]
+    fn system_prompt_has_decision_principles() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+        );
+        let prompt = agent.build_system_prompt(&[]);
+        // 新决策原则应包含关键条目
+        assert!(prompt.contains("先查后做"));
+        assert!(prompt.contains("不知道就问"));
+        assert!(prompt.contains("self_info"));
+        // 旧的冗长内容应该已移除
+        assert!(!prompt.contains("[工具结果格式]"));
+        assert!(!prompt.contains("[行为准则]"));
+        assert!(!prompt.contains("Shell 命令白名单"));
+    }
+
+    #[test]
+    fn system_prompt_is_lean() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+        );
+        let prompt = agent.build_system_prompt(&[]);
+        // 精简后应明显短于旧版（旧版约 800+ 字符）
+        // 精简后约 735 字符（旧版含白名单+工具格式+行为准则约 1200+ 字符）
+        assert!(
+            prompt.len() < 800,
+            "system prompt 应精简到 800 字符以内，实际 {} 字符",
+            prompt.len()
+        );
     }
 
     #[tokio::test]

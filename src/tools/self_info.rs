@@ -231,7 +231,6 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::config::{DefaultConfig, MemoryConfig, ProviderConfig, SecurityConfig};
-    use crate::security::AutonomyLevel;
 
     fn test_config() -> Config {
         let mut providers = HashMap::new();
