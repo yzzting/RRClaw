@@ -173,6 +173,45 @@ impl SqliteMemory {
         Ok(messages)
     }
 
+    /// 种入核心知识条目（启动时调用，upsert 语义）
+    /// 让 BM25 recall 能匹配到 RRClaw 自身信息，减少模型盲猜
+    pub async fn seed_core_knowledge(&self, data_dir: &Path, log_dir: &Path, config_path: &Path) -> Result<()> {
+        let seeds = [
+            (
+                "rrclaw_db_path",
+                format!(
+                    "RRClaw 的 SQLite 数据库位于 {}，包含 memories 和 conversation_history 两张表",
+                    data_dir.join("memory.db").display()
+                ),
+            ),
+            (
+                "rrclaw_log_path",
+                format!(
+                    "RRClaw 的日志文件位于 {}/rrclaw.log.YYYY-MM-DD，默认 debug 级别，trace 级别可看完整 API 请求体",
+                    log_dir.display()
+                ),
+            ),
+            (
+                "rrclaw_config_path",
+                format!(
+                    "RRClaw 的配置文件位于 {}，TOML 格式，包含 providers/memory/security 配置",
+                    config_path.display()
+                ),
+            ),
+            (
+                "rrclaw_capabilities",
+                "RRClaw 支持的工具: shell（命令执行）、file_read（读文件）、file_write（写文件）、config（读写配置）、self_info（查询自身信息）".to_string(),
+            ),
+        ];
+
+        for (key, content) in &seeds {
+            self.store(key, content, MemoryCategory::Core).await?;
+        }
+
+        tracing::debug!("已种入 {} 条核心知识", seeds.len());
+        Ok(())
+    }
+
     /// 从 SQLite 根据 key 查询完整条目
     async fn get_from_sqlite(&self, key: &str) -> Result<Option<MemoryEntry>> {
         let db = self.db.lock().await;
@@ -598,6 +637,39 @@ mod tests {
         } else {
             panic!("应为 Chat 消息");
         }
+    }
+
+    #[tokio::test]
+    async fn seed_core_knowledge_stores_and_recalls() {
+        let mem = create_test_memory().await;
+        let data_dir = std::path::Path::new("/tmp/rrclaw/data");
+        let log_dir = std::path::Path::new("/tmp/rrclaw/logs");
+        let config_path = std::path::Path::new("/tmp/rrclaw/config.toml");
+
+        mem.seed_core_knowledge(data_dir, log_dir, config_path)
+            .await
+            .unwrap();
+
+        // 验证种子数量
+        let count = mem.count().await.unwrap();
+        assert_eq!(count, 4);
+
+        // 验证 recall 能命中 "SQLite 数据库" 关键词
+        let results = mem.recall("SQLite 数据库", 5).await.unwrap();
+        assert!(!results.is_empty(), "应能 recall 到数据库相关知识");
+        assert!(results[0].content.contains("memory.db"));
+
+        // 验证 recall 能命中 "日志" 关键词
+        let results = mem.recall("日志", 5).await.unwrap();
+        assert!(!results.is_empty(), "应能 recall 到日志相关知识");
+        assert!(results[0].content.contains("rrclaw.log"));
+
+        // 验证重复调用是 upsert（不会重复）
+        mem.seed_core_knowledge(data_dir, log_dir, config_path)
+            .await
+            .unwrap();
+        let count = mem.count().await.unwrap();
+        assert_eq!(count, 4);
     }
 
     #[tokio::test]

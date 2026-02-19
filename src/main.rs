@@ -99,13 +99,19 @@ async fn run_agent(
     let tools = rrclaw::tools::create_tools(
         config.clone(),
         data_dir.clone(),
-        log_dir,
-        config_path,
+        log_dir.clone(),
+        config_path.clone(),
     );
     let memory = Arc::new(
         rrclaw::memory::SqliteMemory::open(&data_dir)
             .wrap_err("初始化 Memory 失败")?,
     );
+
+    // 种入核心知识（upsert，每次启动保持最新）
+    memory
+        .seed_core_knowledge(&data_dir, &log_dir, &config_path)
+        .await
+        .wrap_err("种入核心知识失败")?;
 
     // 创建 SecurityPolicy
     let policy = rrclaw::security::SecurityPolicy {
