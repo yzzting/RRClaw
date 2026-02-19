@@ -105,17 +105,20 @@ async fn run_agent(
     let builtin = rrclaw::skills::builtin_skills();
     let skills = rrclaw::skills::load_skills(&workspace_dir, &global_skills_dir, builtin);
 
-    // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills）
+    // 创建 Memory（Arc 共享给 Tools）
+    let memory = Arc::new(
+        rrclaw::memory::SqliteMemory::open(&data_dir)
+            .wrap_err("初始化 Memory 失败")?,
+    );
+
+    // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills，MemoryTools 需要 memory）
     let tools = rrclaw::tools::create_tools(
         config.clone(),
         data_dir.clone(),
         log_dir.clone(),
         config_path.clone(),
         skills.clone(),
-    );
-    let memory = Arc::new(
-        rrclaw::memory::SqliteMemory::open(&data_dir)
-            .wrap_err("初始化 Memory 失败")?,
+        memory.clone() as Arc<dyn rrclaw::memory::Memory>,
     );
 
     // 种入核心知识（upsert，每次启动保持最新）

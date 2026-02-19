@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 
 use crate::agent::Agent;
 use crate::config::Config;
-use crate::memory::SqliteMemory;
+use crate::memory::{Memory, SqliteMemory};
 use crate::security::SecurityPolicy;
 
 /// Agent 工厂: 为每个 chat 创建独立的 Agent
@@ -49,6 +49,7 @@ impl AgentFactory {
             log_dir,
             config_path,
             vec![], // Telegram 暂不加载 skills
+            self.memory.clone() as Arc<dyn Memory>,
         );
         let policy = SecurityPolicy {
             autonomy: self.config.security.autonomy.clone(),
