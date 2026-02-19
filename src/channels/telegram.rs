@@ -32,7 +32,23 @@ impl AgentFactory {
             .ok_or_else(|| color_eyre::eyre::eyre!("Provider '{}' 未配置", provider_key))?;
 
         let provider = crate::providers::create_provider(provider_config);
-        let tools = crate::tools::create_tools();
+        let data_dir = {
+            let base_dirs = directories::BaseDirs::new()
+                .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
+            base_dirs.home_dir().join(".rrclaw").join("data")
+        };
+        let log_dir = {
+            let base_dirs = directories::BaseDirs::new()
+                .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
+            base_dirs.home_dir().join(".rrclaw").join("logs")
+        };
+        let config_path = crate::config::Config::config_path()?;
+        let tools = crate::tools::create_tools(
+            self.config.clone(),
+            data_dir,
+            log_dir,
+            config_path,
+        );
         let policy = SecurityPolicy {
             autonomy: self.config.security.autonomy.clone(),
             allowed_commands: self.config.security.allowed_commands.clone(),

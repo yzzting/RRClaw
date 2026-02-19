@@ -90,11 +90,18 @@ async fn run_agent(
     // 创建 Provider
     let provider = rrclaw::providers::create_provider(provider_config);
 
-    // 创建 Tools
-    let tools = rrclaw::tools::create_tools();
-
     // 创建 Memory（Arc 共享给 Agent 和 CLI）
     let data_dir = data_dir()?;
+    let log_dir = log_dir()?;
+    let config_path = rrclaw::config::Config::config_path()?;
+
+    // 创建 Tools（SelfInfoTool 需要 config 和路径信息）
+    let tools = rrclaw::tools::create_tools(
+        config.clone(),
+        data_dir.clone(),
+        log_dir,
+        config_path,
+    );
     let memory = Arc::new(
         rrclaw::memory::SqliteMemory::open(&data_dir)
             .wrap_err("初始化 Memory 失败")?,
