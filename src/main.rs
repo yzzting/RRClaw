@@ -95,12 +95,23 @@ async fn run_agent(
     let log_dir = log_dir()?;
     let config_path = rrclaw::config::Config::config_path()?;
 
-    // 创建 Tools（SelfInfoTool 需要 config 和路径信息）
+    // 加载 Skills（内置 > 全局 > 项目级）
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let global_skills_dir = {
+        let base_dirs = directories::BaseDirs::new()
+            .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
+        base_dirs.home_dir().join(".rrclaw").join("skills")
+    };
+    let builtin = rrclaw::skills::builtin_skills();
+    let skills = rrclaw::skills::load_skills(&workspace_dir, &global_skills_dir, builtin);
+
+    // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills）
     let tools = rrclaw::tools::create_tools(
         config.clone(),
         data_dir.clone(),
         log_dir.clone(),
         config_path.clone(),
+        skills.clone(),
     );
     let memory = Arc::new(
         rrclaw::memory::SqliteMemory::open(&data_dir)

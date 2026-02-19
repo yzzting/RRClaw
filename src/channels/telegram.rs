@@ -48,6 +48,7 @@ impl AgentFactory {
             data_dir,
             log_dir,
             config_path,
+            vec![], // Telegram 暂不加载 skills
         );
         let policy = SecurityPolicy {
             autonomy: self.config.security.autonomy.clone(),
