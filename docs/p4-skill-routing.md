@@ -149,7 +149,7 @@ fn build_routing_prompt(skills: &[SkillMeta]) -> String {
 async fn route(&self, user_message: &str) -> Result<RouteResult> {
     use crate::providers::traits::{ChatMessage, ConversationMessage};
 
-    let routing_prompt = build_routing_prompt(&self.skills);
+    let routing_prompt = build_routing_prompt(&self.skills_meta);
 
     let messages = vec![
         ConversationMessage::Chat(ChatMessage {
@@ -247,18 +247,18 @@ fn extract_json(text: &str) -> &str {
 在现有 `process_message()` 开头插入 Phase 1 路由逻辑：
 
 ```rust
-pub async fn process_message(
-    &mut self,
-    user_msg: &str,
-    on_text: impl Fn(&str),
-) -> Result<String> {
+// 注意：实际签名保持不变，不增加 on_text 参数
+// pub async fn process_message(&mut self, user_msg: &str) -> Result<String>
+// NeedClarification 结果通过 Ok(question) 返回，调用方（CLI/Telegram）负责展示
+
+pub async fn process_message(&mut self, user_msg: &str) -> Result<String> {
     // ─── Phase 1: 路由 ───────────────────────────────────────────
     let route_result = self.route(user_msg).await?;
 
     match route_result {
         RouteResult::NeedClarification(question) => {
-            // 直接返回澄清问题，不执行任何工具
-            on_text(&question);
+            // 直接返回澄清问题字符串，不写入 history，不执行任何工具
+            // CLI/Telegram 层收到后直接展示给用户
             return Ok(question);
         }
         RouteResult::Skills(skill_names) => {
@@ -286,44 +286,38 @@ pub async fn process_message(
 fn inject_routed_skills(&mut self, skill_names: &[String]) {
     let mut content = String::new();
     for name in skill_names {
-        if let Some(skill_content) = load_skill_content_by_name(&self.skills, name) {
-            content.push_str(&format!("\n\n---\n## Skill: {}\n{}", name, skill_content));
+        // 使用 src/skills/mod.rs 中的 load_skill_content(name, skills) -> Result<SkillContent>
+        // SkillContent.instructions 是去除 frontmatter 后的正文
+        if let Ok(skill_content) = crate::skills::load_skill_content(name, &self.skills_meta) {
+            content.push_str(&format!(
+                "\n\n---\n## Skill: {}\n{}",
+                name, skill_content.instructions
+            ));
         }
     }
     if !content.is_empty() {
         self.routed_skill_content = Some(content);
+    } else {
+        self.routed_skill_content = None;
     }
 }
 ```
 
 ### 6. 修改 `build_system_prompt()` — Phase 2 注入 skill 内容
 
-Phase 2 的 system prompt 需要包含已路由的 skill 内容：
+实际签名为 `fn build_system_prompt(&self, memories: &[crate::memory::MemoryEntry]) -> String`，
+不需要修改签名，只在现有函数体中新增 `routed_skill_content` 的注入段。
+
+在现有 `parts.push(...)` 组装逻辑中，**在记忆段之后、环境信息之前**加入：
 
 ```rust
-fn build_system_prompt(&self, memory_context: Option<&str>) -> String {
-    let mut prompt = self.base_system_prompt(); // 身份 + 安全约束
-
-    // 工具描述（完整 schema，Phase 2 才注入）
-    prompt.push_str(&self.build_tools_section());
-
-    // 已路由的 skill L2 内容（Phase 1 结果）
-    if let Some(skill_content) = &self.routed_skill_content {
-        prompt.push_str("\n\n[行为指南]\n");
-        prompt.push_str(skill_content);
-    }
-
-    // 记忆上下文（动态，Phase 2 才注入）
-    if let Some(ctx) = memory_context {
-        prompt.push_str(&format!("\n\n[相关记忆]\n{}", ctx));
-    }
-
-    // 环境信息
-    prompt.push_str(&self.build_env_section());
-
-    prompt
+// 已路由的 skill L2 行为指南（Phase 1 结果，每轮重置）
+if let Some(skill_content) = &self.routed_skill_content {
+    parts.push(format!("[行为指南]\n{}", skill_content));
 }
 ```
+
+不需要修改函数签名，只是在 `parts` 向量的合适位置插入这一段。
 
 ---
 
@@ -488,11 +482,14 @@ fn build_routing_prompt_no_tools() {
 
 #[test]
 fn build_routing_prompt_contains_skill_names() {
+    // SkillMeta 的实际字段：name, description, tags, source, path（无 content_hash）
+    // SkillSource 枚举值为 BuiltIn（大写 I），不是 Builtin
     let skills = vec![SkillMeta {
         name: "git-workflow".to_string(),
         description: "Git 操作指南（用户提到 git 时加载）".to_string(),
-        source: SkillSource::Builtin,
-        content_hash: None,
+        tags: vec![],
+        source: SkillSource::BuiltIn,
+        path: None,
     }];
     let prompt = build_routing_prompt(&skills);
     assert!(prompt.contains("git-workflow"));

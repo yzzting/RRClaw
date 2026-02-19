@@ -274,9 +274,17 @@ fn is_retryable(err_str: &str) -> bool {
     true  // 默认可重试（超时、网络、5xx、429 等）
 }
 
-/// 截断错误信息用于日志
-fn truncate_error(s: &str) -> &str {
-    &s[..s.len().min(150)]
+/// 截断错误信息用于日志（按 char 边界截断，避免中文 panic）
+fn truncate_error(s: &str) -> String {
+    // 不能用 &s[..150]，中文每字 3 字节，直接按字节切会 panic
+    // loop_.rs 中已有 truncate_str 实现，直接复用：
+    // use crate::agent::loop_::truncate_str;  // 若已 pub，直接用
+    // 否则自行实现：
+    s.char_indices()
+        .nth(150)
+        .map(|(i, _)| &s[..i])
+        .unwrap_or(s)
+        .to_string()
 }
 ```
 

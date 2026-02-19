@@ -339,6 +339,7 @@ pub fn create_tools(
         Box::new(ConfigTool),
         Box::new(SelfInfoTool::new(app_config, data_dir, log_dir, config_path)),
         Box::new(SkillTool::new(skills)),
+        Box::new(GitTool),                                 // P4 已实现，保留
         Box::new(MemoryStoreTool::new(memory.clone())),   // 新增
         Box::new(MemoryRecallTool::new(memory.clone())),  // 新增
         Box::new(MemoryForgetTool::new(memory)),           // 新增
