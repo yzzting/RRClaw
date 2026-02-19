@@ -15,8 +15,8 @@ impl Tool for GitTool {
     }
 
     fn description(&self) -> &str {
-        "Git 版本控制操作。支持 action: status, diff, log, add, commit, branch, checkout, push。\
-         所有操作在工作目录下执行。"
+        "Git 版本控制（推荐，有安全保护）。支持 action: status, diff, log, add, commit, branch, checkout, push。\
+         比 shell 工具更安全：强制 push/checkout 会被拦截，action 白名单保护。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

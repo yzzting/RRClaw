@@ -204,7 +204,20 @@ impl Agent {
         }));
 
         // 4. Tool call 循环
-        let tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
+        // 预路由：尝试自动选择专用工具
+        let forced_tool = self.pre_select_tool(user_msg);
+        let tool_specs: Vec<ToolSpec> = if let Some(tool_name) = forced_tool {
+            // 强制只使用指定工具
+            debug!("强制使用工具: {}", tool_name);
+            self.tools
+                .iter()
+                .filter(|t| t.name() == tool_name)
+                .map(|t| t.spec())
+                .collect()
+        } else {
+            // 让 LLM 自行选择
+            self.tools.iter().map(|t| t.spec()).collect()
+        };
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -329,7 +342,20 @@ impl Agent {
         }));
 
         // 4. Tool call 循环
-        let tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
+        // 预路由：尝试自动选择专用工具
+        let forced_tool = self.pre_select_tool(user_msg);
+        let tool_specs: Vec<ToolSpec> = if let Some(tool_name) = forced_tool {
+            // 强制只使用指定工具
+            debug!("强制使用工具: {}", tool_name);
+            self.tools
+                .iter()
+                .filter(|t| t.name() == tool_name)
+                .map(|t| t.spec())
+                .collect()
+        } else {
+            // 让 LLM 自行选择
+            self.tools.iter().map(|t| t.spec()).collect()
+        };
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -569,6 +595,41 @@ impl Agent {
         ).to_string());
 
         parts.join("\n\n")
+    }
+
+    /// 预处理用户输入，尝试自动路由到专用工具
+    /// 返回 Some(tool_name) 表示强制使用该工具，None 表示让 LLM 自行选择
+    fn pre_select_tool(&self, user_input: &str) -> Option<&str> {
+        let input_lower = user_input.to_lowercase();
+
+        // 检测 git 操作（排除 github 等）
+        // 匹配模式: git 开头，或包含 git 命令（git log, git status 等）
+        let git_patterns = [
+            "git ",      // git 开头
+            "git\n",     // git 换行
+            "git status",
+            "git log",
+            "git diff",
+            "git add",
+            "git commit",
+            "git branch",
+            "git checkout",
+            "git push",
+            "git pull",
+            "git fetch",
+        ];
+
+        for pattern in &git_patterns {
+            if input_lower.contains(*pattern) && !input_lower.contains("github") {
+                // 检查 git 工具是否可用
+                if self.tools.iter().any(|t| t.name() == "git") {
+                    debug!("自动路由到 git 工具 (matched: {})", pattern);
+                    return Some("git");
+                }
+            }
+        }
+
+        None
     }
 
     /// 裁剪 history 保持在最大限制内
@@ -890,6 +951,70 @@ mod tests {
             "system prompt 应精简到 800 字符以内，实际 {} 字符",
             prompt.len()
         );
+    }
+
+    // --- pre_select_tool 测试 ---
+
+    #[test]
+    fn pre_select_tool_routes_git_commands() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![Box::new(crate::tools::git::GitTool)],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+            vec![],
+        );
+
+        // 应该路由到 git 工具的场景
+        assert_eq!(agent.pre_select_tool("git status"), Some("git"));
+        assert_eq!(agent.pre_select_tool("git log"), Some("git"));
+        assert_eq!(agent.pre_select_tool("git diff"), Some("git"));
+        assert_eq!(agent.pre_select_tool("git add ."), Some("git"));
+        assert_eq!(agent.pre_select_tool("git commit -m \"test\""), Some("git"));
+        assert_eq!(agent.pre_select_tool("执行 git push"), Some("git"));
+        assert_eq!(agent.pre_select_tool("git pull origin main"), Some("git"));
+    }
+
+    #[test]
+    fn pre_select_tool_ignores_github() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![Box::new(crate::tools::git::GitTool)],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+            vec![],
+        );
+
+        // GitHub CLI 不应该触发路由
+        assert_eq!(agent.pre_select_tool("gh pr status"), None);
+        assert_eq!(agent.pre_select_tool("github 仓库"), None);
+    }
+
+    #[test]
+    fn pre_select_tool_allows_llm_for_other() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![Box::new(crate::tools::shell::ShellTool)],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+            vec![],
+        );
+
+        // 普通命令让 LLM 自行选择
+        assert_eq!(agent.pre_select_tool("列出当前目录"), None);
+        assert_eq!(agent.pre_select_tool("读取文件 src/main.rs"), None);
     }
 
     #[tokio::test]
