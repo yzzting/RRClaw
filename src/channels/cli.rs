@@ -1,4 +1,4 @@
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
@@ -10,6 +10,7 @@ use crate::agent::Agent;
 use crate::config::{Config, ProviderConfig, PROVIDERS};
 use crate::memory::SqliteMemory;
 use crate::providers::{StreamEvent, ToolStatusKind};
+use crate::skills::{load_skill_content, validate_skill_name, SkillMeta, SkillSource};
 
 /// 当天日期作为 session ID
 fn today_session_id() -> String {
@@ -79,7 +80,12 @@ pub fn setup_cli_confirm(agent: &mut Agent) {
 }
 
 /// 运行 CLI REPL 交互循环（流式输出）
-pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory, config: &Config) -> Result<()> {
+pub async fn run_repl(
+    agent: &mut Agent,
+    memory: &SqliteMemory,
+    config: &Config,
+    skills: Vec<SkillMeta>,
+) -> Result<()> {
     setup_cli_confirm(agent);
 
     // 加载今天的对话历史
@@ -124,7 +130,7 @@ pub async fn run_repl(agent: &mut Agent, memory: &SqliteMemory, config: &Config)
 
                 // 斜杠命令
                 if let Some(cmd) = input.strip_prefix('/') {
-                    handle_slash_command(cmd, agent, &session_id, memory, config).await?;
+                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills).await?;
                     continue;
                 }
 
@@ -170,6 +176,7 @@ async fn handle_slash_command(
     session_id: &str,
     memory: &SqliteMemory,
     config: &Config,
+    skills: &[SkillMeta],
 ) -> Result<()> {
     let name = cmd.split_whitespace().next().unwrap_or(cmd);
 
@@ -200,11 +207,190 @@ async fn handle_slash_command(
         "apikey" => {
             cmd_apikey(agent, config)?;
         }
+        "skill" => {
+            // 切掉命令名，剩余部分作为参数
+            let rest = cmd["skill".len()..].trim();
+            cmd_skill(rest, agent, skills)?;
+        }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
         }
     }
     Ok(())
+}
+
+/// /skill 命令入口 —— 解析子命令后分发
+fn cmd_skill(rest: &str, agent: &mut Agent, skills: &[SkillMeta]) -> Result<()> {
+    let mut parts = rest.splitn(2, ' ');
+    let sub = parts.next().unwrap_or("").trim();
+    let arg = parts.next().map(|s| s.trim());
+
+    match sub {
+        "" => cmd_skill_list(skills),
+        "new" => cmd_skill_new(arg)?,
+        "edit" => cmd_skill_edit(arg, skills)?,
+        "delete" => cmd_skill_delete(arg, skills)?,
+        "show" => cmd_skill_show(arg, skills)?,
+        name => {
+            // 默认行为：加载技能指令注入当前对话
+            match load_skill_content(name, skills) {
+                Ok(content) => {
+                    agent.inject_skill_context(name, &content.instructions);
+                    println!("✓ 已加载技能: {}（指令已注入对话）", name);
+                }
+                Err(e) => println!("✗ {}", e),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// /skill — 列出所有可用技能
+fn cmd_skill_list(skills: &[SkillMeta]) {
+    if skills.is_empty() {
+        println!("暂无可用技能。");
+        println!("  使用 /skill new <name> 创建技能");
+        println!("  或将技能目录放到 ~/.rrclaw/skills/<name>/SKILL.md");
+        return;
+    }
+    println!("可用技能:\n");
+    for s in skills {
+        println!("  {} {} — {}", s.source.label(), s.name, s.description);
+    }
+    println!();
+    println!("  /skill <name>         加载技能指令到当前对话");
+    println!("  /skill show <name>    查看技能完整内容");
+    println!("  /skill new <name>     创建新技能");
+    println!("  /skill edit <name>    编辑技能（$EDITOR）");
+    println!("  /skill delete <name>  删除技能");
+}
+
+/// /skill new <name> — 创建技能模板
+fn cmd_skill_new(name: Option<&str>) -> Result<()> {
+    let name = name.ok_or_else(|| eyre!("用法: /skill new <name>"))?;
+    validate_skill_name(name)?;
+
+    let global_dir = global_skills_dir()?;
+    let skill_dir = global_dir.join(name);
+
+    if skill_dir.exists() {
+        println!("技能 '{}' 已存在。使用 /skill edit {} 编辑。", name, name);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&skill_dir)
+        .wrap_err_with(|| format!("创建技能目录失败: {}", skill_dir.display()))?;
+
+    let title = name.replace('-', " ");
+    let template = format!(
+        "---\nname: {}\ndescription: 简短描述这个技能做什么。当用户要求 XXX 时使用。\ntags: []\n---\n\n# {}\n\n## 步骤\n1. 用 file_read 读取相关文件\n2. 分析内容\n3. 输出结果\n\n## 注意事项\n- ...\n",
+        name, title
+    );
+    let skill_path = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_path, &template)
+        .wrap_err_with(|| format!("写入 SKILL.md 失败: {}", skill_path.display()))?;
+
+    println!("✓ 已创建技能模板: {}", skill_path.display());
+    println!("  使用 /skill edit {} 编辑内容。", name);
+    Ok(())
+}
+
+/// /skill edit <name> — 用 $EDITOR 打开 SKILL.md
+fn cmd_skill_edit(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
+    let name = name.ok_or_else(|| eyre!("用法: /skill edit <name>"))?;
+
+    let skill_path = find_editable_skill_path(name, skills)?;
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+
+    std::process::Command::new(&editor)
+        .arg(skill_path.join("SKILL.md"))
+        .status()
+        .wrap_err_with(|| format!("启动编辑器 '{}' 失败", editor))?;
+
+    println!("✓ 编辑完成。重启 rrclaw 后技能列表会刷新。");
+    Ok(())
+}
+
+/// /skill delete <name> — 删除技能（带 [y/N] 确认，内置不可删）
+fn cmd_skill_delete(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
+    let name = name.ok_or_else(|| eyre!("用法: /skill delete <name>"))?;
+
+    let skill = skills
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| eyre!("未找到技能: {}", name))?;
+
+    if skill.source == SkillSource::BuiltIn {
+        println!("✗ 内置技能不可删除。");
+        return Ok(());
+    }
+
+    let path = skill
+        .path
+        .as_ref()
+        .ok_or_else(|| eyre!("技能路径为空"))?;
+
+    print!("确认删除技能 '{}'? [y/N] ", name);
+    let _ = std::io::stdout().flush();
+    let mut input = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut input)
+        .wrap_err("读取用户输入失败")?;
+
+    if input.trim().to_lowercase() == "y" {
+        std::fs::remove_dir_all(path)
+            .wrap_err_with(|| format!("删除 {} 失败", path.display()))?;
+        println!("✓ 已删除技能: {}", name);
+    } else {
+        println!("已取消。");
+    }
+    Ok(())
+}
+
+/// /skill show <name> — 打印技能全文（不注入对话）
+fn cmd_skill_show(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
+    let name = name.ok_or_else(|| eyre!("用法: /skill show <name>"))?;
+    let content = load_skill_content(name, skills)
+        .map_err(|e| eyre!("{}", e))?;
+
+    println!("=== {} [{}] ===\n", content.meta.name, content.meta.source.label());
+    println!("{}", content.instructions);
+    if !content.resources.is_empty() {
+        println!("\n--- 附带资源 ---");
+        for r in &content.resources {
+            println!("  {}", r);
+        }
+    }
+    Ok(())
+}
+
+/// 获取用户全局 skills 目录 ~/.rrclaw/skills/
+fn global_skills_dir() -> Result<std::path::PathBuf> {
+    let base_dirs = directories::BaseDirs::new()
+        .ok_or_else(|| eyre!("无法获取 home 目录"))?;
+    Ok(base_dirs.home_dir().join(".rrclaw").join("skills"))
+}
+
+/// 找到可编辑的 skill 路径（全局或项目级，非内置）
+fn find_editable_skill_path(name: &str, skills: &[SkillMeta]) -> Result<std::path::PathBuf> {
+    let skill = skills
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| eyre!("未找到技能 '{}'。使用 /skill new {} 创建。", name, name))?;
+
+    if skill.source == SkillSource::BuiltIn {
+        return Err(eyre!(
+            "内置技能不可直接编辑。\n\
+             如需自定义，请用 /skill new {} 在全局目录创建同名技能（会覆盖内置版本）。",
+            name
+        ));
+    }
+
+    skill
+        .path
+        .clone()
+        .ok_or_else(|| eyre!("技能路径为空"))
 }
 
 /// /config — 显示当前配置
@@ -506,14 +692,21 @@ fn save_provider_to_config(name: &str, pc: &ProviderConfig, path: Option<&std::p
 /// 打印帮助信息
 fn print_help() {
     println!("可用命令:");
-    println!("  /help, /h     显示此帮助");
-    println!("  /new          新建对话（清空历史）");
-    println!("  /clear        清屏");
-    println!("  /config       显示当前配置");
-    println!("  /switch       切换 Provider + 模型");
-    println!("  /apikey       修改 API Key 或 Base URL");
+    println!("  /help, /h              显示此帮助");
+    println!("  /new                   新建对话（清空历史）");
+    println!("  /clear                 清屏");
+    println!("  /config                显示当前配置");
+    println!("  /switch                切换 Provider + 模型");
+    println!("  /apikey                修改 API Key 或 Base URL");
     println!();
-    println!("  exit, quit    退出");
+    println!("  /skill                 列出所有可用技能");
+    println!("  /skill <name>          加载技能指令到当前对话");
+    println!("  /skill show <name>     查看技能完整内容");
+    println!("  /skill new <name>      创建新技能");
+    println!("  /skill edit <name>     编辑技能（$EDITOR）");
+    println!("  /skill delete <name>   删除技能");
+    println!();
+    println!("  exit, quit             退出");
     println!();
     println!("其他输入会发送给 AI 处理。");
 }

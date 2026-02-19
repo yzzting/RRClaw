@@ -142,12 +142,13 @@ async fn run_agent(
         provider_config.base_url.clone(),
         model,
         config.default.temperature,
+        skills.clone(),
     );
 
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
-        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config).await?,
+        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills).await?,
     }
 
     Ok(())
