@@ -10,13 +10,17 @@
 - 多模型支持（GLM 智谱、MiniMax、DeepSeek、Claude、GPT）
 - 安全沙箱（命令白名单、路径限制、权限分级）
 - 持久化记忆（SQLite 存储 + tantivy 中文全文搜索）
-- 工具执行（Shell 命令、文件读写）
+- 工具执行（Shell、文件读写、Git、配置管理）
+- Skills 系统（三级渐进加载，行为驱动）
+- 斜杠命令（/help /new /clear /config /switch /apikey /skill）
 - 可插拔架构（Trait 抽象，易于扩展）
 
-**MVP 范围**:
-- P0: CLI Channel + Agent Loop + 多模型 Provider + 基础 Tools + Security
-- P1: Telegram Channel、向量搜索记忆
-- P2: 更多 Channel、Tunnel 层、Heartbeat/Cron
+**实现进度**:
+- P0 ✅: CLI Channel + Agent Loop + 多模型 Provider + 基础 Tools + Security
+- P1 ✅: 流式输出 + Supervised 确认 + History 持久化 + Setup 向导 + Telegram Channel
+- P2 ✅: 斜杠命令（/help /new /clear /config /switch /apikey）+ ConfigTool
+- P3 ✅: Skills 系统（三级加载）+ SkillTool + /skill CRUD 命令
+- P4 🚧: Skill 驱动两阶段路由（最高优先级）+ GitTool ✅ + Memory Tools + ReliableProvider + History Compaction + MCP Client
 
 ---
 
@@ -26,8 +30,8 @@
 ┌─────────────┐     ┌──────────────┐     ┌──────────────────┐
 │  Channels    │     │ Security     │     │  AI Providers    │
 │  ─────────   │     │ ──────────   │     │  ─────────────   │
-│  CLI (MVP)   │     │ 命令白名单    │     │  GLM 智谱        │
-│  Telegram(P1)│     │ 路径沙箱      │     │  MiniMax         │
+│  CLI         │     │ 命令白名单    │     │  GLM 智谱        │
+│  Telegram    │     │ 路径沙箱      │     │  MiniMax         │
 │  + Channel   │     │ 权限分级      │     │  DeepSeek        │
 │    trait      │     │ (RO/Super/   │     │  Claude          │
 │              │     │   Full)      │     │  GPT             │
@@ -36,18 +40,18 @@
        ▼                    ▼                      ▼
 ┌──────────────────────────────────────────────────────────┐
 │                      Agent Loop                          │
-│  Message In → Memory Recall → LLM exec → Tools → Out    │
-│  (max 10 iterations per turn)                            │
-└──────────┬──────────────────────────────┬────────────────┘
-           ▼                              ▼
-┌──────────────────┐           ┌──────────────────┐
-│  Memory          │           │  Tools           │
-│  ──────          │           │  ─────           │
-│  SQLite 存储      │           │  Shell 命令执行   │
-│  tantivy 全文搜索 │           │  文件读写         │
-│  jieba 中文分词   │           │  + Tool trait     │
-│  + Memory trait  │           │                  │
-└──────────────────┘           └──────────────────┘
+│  Phase1:路由 → Phase2:执行 → Tool call loop → Out        │
+│  (两阶段 Skill 路由，max 10 tool iterations/turn)         │
+└───────────┬──────────────────────┬───────────────────────┘
+            ▼                      ▼                      ▼
+┌──────────────────┐  ┌──────────────────────┐  ┌──────────────────┐
+│  Memory          │  │  Tools               │  │  Skills          │
+│  ──────          │  │  ─────               │  │  ──────          │
+│  SQLite 存储      │  │  Shell / File        │  │  L1 元数据目录    │
+│  tantivy 全文搜索 │  │  Git / Config        │  │  L2 行为指南      │
+│  jieba 中文分词   │  │  SelfInfo / Skill    │  │  内置 + 用户定义  │
+│  + Memory trait  │  │  + Tool trait        │  │  驱动 Agent 行为  │
+└──────────────────┘  └──────────────────────┘  └──────────────────┘
 ```
 
 ## 核心 Trait 设计
@@ -104,7 +108,7 @@ pub enum ConversationMessage {
 ```
 
 实现:
-- `CompatibleProvider` — 统一处理所有 OpenAI 兼容 API（GLM/MiniMax/DeepSeek/GPT），自动拼接 endpoint
+- `CompatibleProvider` — 统一处理所有 OpenAI 兼容 API（GLM/MiniMax/DeepSeek/GPT），自动拼接 endpoint，支持 SSE 流式
 - `ClaudeProvider` — Anthropic Messages API（x-api-key auth，system prompt 独立传递）
 
 ### Tool trait — 工具抽象
@@ -116,6 +120,11 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
     async fn execute(&self, args: serde_json::Value, policy: &SecurityPolicy) -> Result<ToolResult>;
+
+    /// 执行前预检，返回 Some(reason) 表示拒绝（在用户确认前调用，避免确认后被拒绝）
+    fn pre_validate(&self, args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
+        None
+    }
 
     fn spec(&self) -> ToolSpec { /* 默认实现 */ }
 }
@@ -139,9 +148,13 @@ pub struct ToolSpec {
 }
 ```
 
-MVP 工具:
-- `ShellTool` — 命令执行，受 SecurityPolicy 约束
+已实现工具:
+- `ShellTool` — 命令执行，受 SecurityPolicy 约束（白名单 + workspace 限制）
 - `FileReadTool` / `FileWriteTool` — 文件读写，受路径沙箱约束
+- `GitTool` — Git 版本控制（status/diff/log/add/commit/branch/checkout/push/pull/fetch），force push/checkout 安全拦截
+- `ConfigTool` — AI 通过自然语言读写 config.toml（toml_edit 保留格式）
+- `SelfInfoTool` — 返回 RRClaw 自身状态（版本、配置、路径、数据目录）
+- `SkillTool` — 按需加载 skill L2 内容注入上下文（C 辅助路径，P3 已实现）
 
 ### Memory trait — 记忆抽象
 
@@ -177,9 +190,9 @@ pub struct MemoryEntry {
 }
 ```
 
-MVP 实现: `SqliteMemory` — SQLite 结构化存储 + tantivy 全文搜索索引（jieba 中文分词 + BM25 排序）
+实现: `SqliteMemory` — SQLite 结构化存储 + tantivy 全文搜索索引（jieba 中文分词 + BM25 排序）+ conversation_history 表
 
-### Channel trait — 消息通道抽象（预留扩展）
+### Channel trait — 消息通道抽象
 
 ```rust
 #[async_trait]
@@ -203,7 +216,65 @@ pub struct ChannelMessage {
 }
 ```
 
-MVP 实现: `CliChannel` — reedline 交互式 REPL
+已实现:
+- `CliChannel` — reedline 交互式 REPL，支持 SSE 流式输出、thinking 动画、斜杠命令
+- `TelegramChannel` — Telegram Bot（teloxide），支持多用户隔离会话
+
+### Skills 系统
+
+Skills 是 RRClaw 的行为驱动机制，将行为指南与核心代码解耦，支持用户自定义扩展。
+
+#### 三级渐进加载
+
+| 级别 | 内容 | 加载时机 |
+|------|------|---------|
+| L1 | 元数据（名称、描述、来源） | 启动时全部加载，注入 system prompt |
+| L2 | 行为指南（精简指令，通常 < 500 字） | Phase 1 路由命中时按需加载 |
+| L3 | 完整内容（详细说明、示例） | 用户显式 `/skill load` 时加载 |
+
+#### 数据结构
+
+```rust
+pub struct SkillMeta {
+    pub name: String,
+    pub description: String,   // 包含触发场景提示，Phase 1 路由依赖此字段
+    pub source: SkillSource,
+    pub content_hash: Option<String>,
+}
+
+pub enum SkillSource {
+    Builtin,                   // 编译期 include_str! 嵌入
+    UserDefined(PathBuf),      // ~/.rrclaw/skills/{name}.md
+}
+```
+
+#### 内置 Skills
+
+- `git-workflow` — Git 操作工作流（提交规范、分支策略）
+- `code-review` — 代码审查最佳实践
+- `rust-dev` — Rust 开发规范（clippy、测试、错误处理）
+
+用户可在 `~/.rrclaw/skills/` 下创建自定义 skill，格式：
+
+```markdown
+---
+name: my-skill
+description: 描述（包含触发场景，Phase 1 路由依赖此字段）
+---
+# Skill 内容
+...
+```
+
+#### /skill 斜杠命令
+
+| 命令 | 说明 |
+|------|------|
+| `/skill list` | 列出所有可用 skill |
+| `/skill load <name>` | 加载 skill L3 完整内容到当前对话 |
+| `/skill show <name>` | 查看 skill 内容 |
+| `/skill new <name>` | 创建新的用户 skill |
+| `/skill edit <name>` | 编辑现有 skill |
+| `/skill delete <name>` | 删除用户 skill |
 
 ---
 
@@ -266,48 +337,53 @@ tail -f ~/.rrclaw/logs/rrclaw.log.*
 
 ```
 1. 接收用户消息
-2. Memory recall — 搜索相关历史上下文，注入 system prompt
-3. 构造 messages + tool specs，调用 Provider
-4. 解析响应:
-   - 有 tool_calls → 逐个执行 tool（经 SecurityPolicy 检查）→ 结果推入 history → 回到 3
+   - 斜杠命令（/help /new /clear /config /switch /apikey /skill）
+     在 CLI 层直接处理，不进入 Agent Loop
+
+2. Phase 1: 路由（P4-skill-routing 实施后生效）
+   极简 system prompt（身份 + 安全约束 + Skill L1 目录）
+   不传工具 schema，不传记忆上下文，temperature=0.1
+   输出 RouteResult:
+   - Skills(names)          → 加载对应 skill L2 内容，进入 Phase 2
+   - Direct                 → 无需 skill，直接进入 Phase 2
+   - NeedClarification(q)   → 返回澄清问题给用户，不执行任何工具
+   Phase 1 失败时降级为 Direct，不阻断请求
+
+3. Skill 注入（Phase 1 结果为 Skills 时）
+   加载对应 skill L2 内容，存入 routed_skill_content（每轮重置）
+
+4. Phase 2: 构造完整 system prompt + Memory recall
+   [1] 身份描述
+   [2] 可用工具描述（完整 schema）
+   [2.5] 技能列表（L1 元数据，供 LLM 使用 SkillTool 自驱动）
+   [3] 安全规则（AutonomyLevel 约束）
+   [4] 记忆上下文（Memory recall 结果）
+   [4.5] 已加载 skill 行为指南（Phase 1 路由结果）
+   [5] 当前环境信息（工作目录、当前时间）
+   [6] 工具结果格式 + 使用规则（LLM 兜底指南）
+
+5. 调用 Provider（chat_with_tools）
+
+6. 解析响应:
+   - 有 tool_calls → 逐个执行 tool（经 SecurityPolicy 检查）
+                  → 结果推入 history → 回到步骤 5
    - 无 tool_calls → 输出最终回复
-5. Memory store — 保存本轮对话摘要
-6. History 管理 — 保留最近 50 条消息
+
+7. Memory store — 保存本轮对话摘要
+
+8. History 管理 — 保留最近 50 条消息
+   （P4-history-compaction: 超出阈值时 LLM 自动摘要压缩替代硬截断）
 ```
 
 最大 tool call 迭代: 10 次/轮
 Tool call 解析: 原生 JSON（OpenAI 格式）+ XML fallback
 
-### System Prompt 构造
+### C 辅助路径（SkillTool 自驱动）
 
-system prompt 按层拼接:
-
-```
-[1] 身份描述
-    "你是 RRClaw，一个安全优先的 AI 助手。"
-
-[2] 可用工具描述（自动生成）
-    遍历 tools_registry，每个 tool 输出:
-    - 名称、描述、参数 JSON Schema
-    格式: "你可以使用以下工具:\n- shell: 执行命令...\n- file_read: ..."
-
-[3] 安全规则
-    当前 AutonomyLevel 下的行为约束:
-    - Supervised: "直接调用工具，系统会自动弹出确认提示"
-    - ReadOnly: "不要尝试执行任何工具"
-    - Full: "你可以自主执行工具，但须遵守白名单限制"
-
-[4] 记忆上下文（动态）
-    Memory recall 返回的相关历史条目，格式:
-    "[相关记忆]\n- {entry1.content}\n- {entry2.content}\n..."
-
-[5] 当前环境信息
-    - 工作目录、当前时间
-
-[6] 工具结果格式 + 使用规则（LLM 兜底指南）
-    - 成功/失败/错误的格式说明
-    - 超时不盲目重试、分析部分输出、最多 3 种方式尝试
-```
+Phase 2 执行阶段，LLM 可自行调用 `SkillTool` 加载额外 skill 内容：
+- Phase 1 未覆盖的模糊场景由此兜底
+- SkillTool 返回内容作为 tool result，LLM 读取后按指南执行
+- 无需额外代码，P3 已实现
 
 ---
 
@@ -316,20 +392,25 @@ system prompt 按层拼接:
 | 依赖 | 用途 | 版本 |
 |------|------|------|
 | `tokio` | 异步运行时 | 1.x |
-| `reqwest` | HTTP 客户端（AI API 调用） | 0.12 |
+| `reqwest` | HTTP 客户端（AI API 调用，含 SSE 流式） | 0.12 |
 | `serde` + `serde_json` | 序列化 | 1.x |
 | `clap` | CLI 参数解析（derive） | 4.x |
 | `rusqlite` | SQLite 结构化存储（bundled） | 0.32+ |
 | `tantivy` | 全文搜索引擎（Rust 原生，替代 FTS5） | 0.22 |
 | `jieba-rs` | 中文分词（配合 tantivy） | 0.7 |
 | `figment` | 配置加载（TOML + 环境变量多层合并） | 0.10 |
+| `toml_edit` | 保留格式的 TOML 读写（ConfigTool） | 0.22 |
 | `color-eyre` + `thiserror` | 错误处理（彩色 span trace，CLI 友好） | latest |
 | `async-trait` | 异步 trait 支持 | 0.1 |
 | `tracing` + `tracing-subscriber` + `tracing-appender` | 日志（双层：stderr warn + 文件 debug） | 0.1/0.2 |
 | `reedline` | CLI 行编辑器（历史、补全、高亮、vi/emacs） | 0.37 |
+| `teloxide` | Telegram Bot SDK | 0.13 |
+| `dialoguer` | 交互式终端表单（setup 向导） | 0.11 |
+| `shell-words` | 安全的命令行参数拆分（GitTool） | 1.x |
 | `directories` | 跨平台配置路径 | 5.x |
 | `chrono` | 时间处理 | 0.4 |
 | `uuid` | 唯一标识生成 | 1.x |
+| `tempfile` | 测试用临时文件/目录 | 3.x |
 
 ---
 
@@ -337,10 +418,19 @@ system prompt 按层拼接:
 
 ```
 rrclaw/
-├── Claude.md                  # 总架构文档（本文件）
+├── CLAUDE.md                  # 总架构文档（本文件）
 ├── Cargo.toml
 ├── docs/
-│   └── implementation-plan.md # 实现计划与提交策略
+│   ├── implementation-plan.md # 实现计划与提交策略
+│   ├── p1-plan.md             # P1 实现计划
+│   ├── p2-slash-commands-and-config-tool.md
+│   ├── p3-skills.md           # P3 Skills 系统设计
+│   ├── p4-skill-routing.md    # P4-0 两阶段路由（最高优先级）★
+│   ├── p4-git-tool.md         # P4 GitTool 设计
+│   ├── p4-memory-tools.md     # P4 Memory Tools 设计
+│   ├── p4-reliable-provider.md # P4 ReliableProvider 设计
+│   ├── p4-history-compaction.md # P4 History 压缩设计
+│   └── p4-mcp-client.md       # P4 MCP Client 设计
 ├── src/
 │   ├── main.rs                # CLI 入口 (clap subcommands)
 │   ├── lib.rs                 # 模块声明
@@ -351,28 +441,39 @@ rrclaw/
 │   ├── providers/
 │   │   ├── Claude.md          # Provider 模块设计文档
 │   │   ├── mod.rs             # create_provider() 工厂函数
-│   │   ├── traits.rs          # Provider trait + ChatMessage/ChatResponse/ToolCall
-│   │   ├── compatible.rs      # OpenAI 兼容协议（GLM/MiniMax/DeepSeek/GPT）
+│   │   ├── traits.rs          # Provider trait + ChatMessage/ChatResponse/ToolCall/ToolSpec
+│   │   ├── compatible.rs      # OpenAI 兼容协议（GLM/MiniMax/DeepSeek/GPT，含 SSE 流式）
 │   │   └── claude.rs          # Anthropic Messages API
 │   ├── agent/
 │   │   ├── Claude.md          # Agent Loop 模块设计文档
 │   │   ├── mod.rs             # agent::run() 入口
-│   │   └── loop_.rs           # Tool call loop 核心循环
+│   │   └── loop_.rs           # 两阶段路由 + Tool call loop 核心循环
 │   ├── channels/
 │   │   ├── Claude.md          # Channel 模块设计文档
 │   │   ├── mod.rs             # Channel trait + 消息分发
-│   │   └── cli.rs             # CLI REPL 实现
+│   │   ├── cli.rs             # CLI REPL（reedline，流式，斜杠命令）
+│   │   └── telegram.rs        # Telegram Bot（teloxide）
 │   ├── tools/
 │   │   ├── Claude.md          # Tools 模块设计文档
-│   │   ├── mod.rs             # Tool 注册表 + 工厂函数
-│   │   ├── traits.rs          # Tool trait + ToolResult/ToolSpec
+│   │   ├── mod.rs             # Tool 注册表 + create_tools() 工厂
+│   │   ├── traits.rs          # Tool trait + ToolResult（ToolSpec 定义在 providers::traits）
 │   │   ├── shell.rs           # Shell 命令执行
-│   │   └── file.rs            # 文件读写
+│   │   ├── file.rs            # 文件读写
+│   │   ├── git.rs             # Git 版本控制（10 种操作 + 安全拦截）
+│   │   ├── config.rs          # ConfigTool（toml_edit 读写）
+│   │   ├── self_info.rs       # SelfInfoTool（RRClaw 自身状态）
+│   │   └── skill.rs           # SkillTool（按需加载 skill L2 内容）
 │   ├── memory/
 │   │   ├── Claude.md          # Memory 模块设计文档
 │   │   ├── mod.rs             # create_memory() 工厂
 │   │   ├── traits.rs          # Memory trait + MemoryEntry/MemoryCategory
-│   │   └── sqlite.rs          # SQLite 存储 + tantivy 搜索索引
+│   │   └── sqlite.rs          # SQLite 存储 + tantivy 搜索 + conversation_history 表
+│   ├── skills/
+│   │   ├── mod.rs             # SkillMeta/SkillSource/load_skills/builtin_skills/load_skill_content
+│   │   └── builtin/           # 内置 skill 文件（include_str! 编译期嵌入）
+│   │       ├── git-workflow.md
+│   │       ├── code-review.md
+│   │       └── rust-dev.md
 │   └── security/
 │       ├── Claude.md          # Security 模块设计文档
 │       ├── mod.rs             # 模块入口 + re-exports
@@ -435,7 +536,7 @@ workspace_only = true
 **任何非 trivial 的功能开发，必须先写计划文档让用户审核，审核通过后再动代码。**
 
 流程：
-1. **写计划文档** — 在 `docs/` 下创建计划 markdown（如 `docs/p2-xxx.md`），包含：改动范围、设计方案、提交策略、验证方式
+1. **写计划文档** — 在 `docs/` 下创建计划 markdown（如 `docs/p4-xxx.md`），包含：改动范围、设计方案、提交策略、验证方式
 2. **提交计划文档** — `git commit` 计划文档
 3. **等用户审核** — 明确告知用户"计划已写好，请审核"，等用户确认后再继续
 4. **按计划实现** — 写测试 → 改代码 → 跑通测试 → 提交
@@ -444,7 +545,7 @@ workspace_only = true
 什么算 trivial：单文件的小 bug fix、clippy 修复、文档 typo。其他都需要计划。
 
 ### 文档驱动开发
-- 根目录 `Claude.md` 作为总架构文档
+- 根目录 `CLAUDE.md` 作为总架构文档
 - 每个功能目录 `src/<module>/Claude.md` 作为子模块需求/设计文档
 - **代码改动流程**: 先更新对应 `Claude.md` → 写/更新测试 → 改代码 → 跑通测试 → 提交
 
@@ -477,3 +578,4 @@ workspace_only = true
 - ZeroClaw 调研笔记: [docs/zeroclaw-reference.md](docs/zeroclaw-reference.md)
 - Provider API 差异: [docs/provider-api-reference.md](docs/provider-api-reference.md)
 - tantivy + jieba 集成: [docs/tantivy-integration.md](docs/tantivy-integration.md)
+- P4 设计文档: [docs/p4-skill-routing.md](docs/p4-skill-routing.md)（最高优先级）
