@@ -26,7 +26,21 @@ ToolResult { success: bool, output: String, error: Option<String> }
 
 `ToolSpec` 已在 `providers::traits` 中定义，此模块 re-export。
 
-## MVP 工具
+## 工具清单
+
+### SelfInfoTool（P2 新增）
+
+- 参数: `query: enum["config", "paths", "provider", "stats", "help"]`
+- 安全检查: 无（纯读取，无副作用）
+- 用途: Agent 按需查询自身信息，替代 system prompt 硬编码
+- API key 脱敏: 只显示前 4 位 + `****`
+- 设计: 配合 system prompt 决策原则第 1 条"先查后做"使用
+
+### ConfigTool
+
+- 参数: `action: enum["get", "set", "list"]`, `key`, `value`
+- 安全检查: `pre_validate` 禁止修改 `security.autonomy`
+- 执行: 通过 `toml_edit` 读写 `~/.rrclaw/config.toml`
 
 ### ShellTool
 
@@ -55,10 +69,15 @@ ToolResult { success: bool, output: String, error: Option<String> }
 ## 工具注册
 
 ```rust
-pub fn create_tools() -> Vec<Box<dyn Tool>>
+pub fn create_tools(
+    app_config: Config,
+    data_dir: PathBuf,
+    log_dir: PathBuf,
+    config_path: PathBuf,
+) -> Vec<Box<dyn Tool>>
 ```
 
-返回所有 MVP 工具实例。
+返回所有工具实例。`SelfInfoTool` 需要 Config 和路径信息。
 
 ## 文件结构
 
@@ -66,3 +85,5 @@ pub fn create_tools() -> Vec<Box<dyn Tool>>
 - `traits.rs` — Tool trait + ToolResult
 - `shell.rs` — ShellTool
 - `file.rs` — FileReadTool + FileWriteTool
+- `config.rs` — ConfigTool（读写 config.toml）
+- `self_info.rs` — SelfInfoTool（Agent 自我信息查询）
