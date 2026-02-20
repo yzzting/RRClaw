@@ -143,6 +143,8 @@ pub struct Agent {
     skills_meta: Vec<SkillMeta>,
     /// Phase 1 路由后加载的 skill 内容，每次 process_message 重置
     routed_skill_content: Option<String>,
+    /// 启动时加载的身份文件内容
+    identity_context: Option<String>,
 }
 
 impl Agent {
@@ -157,6 +159,7 @@ impl Agent {
         model: String,
         temperature: f64,
         skills_meta: Vec<SkillMeta>,
+        identity_context: Option<String>,
     ) -> Self {
         Self {
             provider,
@@ -171,6 +174,7 @@ impl Agent {
             confirm_fn: None,
             skills_meta,
             routed_skill_content: None,
+            identity_context,
         }
     }
 
@@ -315,6 +319,18 @@ impl Agent {
     /// 切换自主级别（运行时生效，不持久化）
     pub fn set_autonomy(&mut self, level: crate::security::AutonomyLevel) {
         self.policy.autonomy = level;
+    }
+
+    /// 重新加载身份文件（无需重启）
+    /// 调用方需提供 data_dir（Agent 自身不存储，避免扩大结构体）
+    pub fn reload_identity(&mut self, workspace_dir: &std::path::Path, data_dir: &std::path::Path) {
+        self.identity_context = crate::agent::identity::load_identity_context(
+            workspace_dir,
+            data_dir,
+        );
+        if self.identity_context.is_some() {
+            tracing::info!("身份文件已重新加载");
+        }
     }
 
     /// 获取所有已加载工具的名称列表
@@ -749,6 +765,11 @@ impl Agent {
     fn build_system_prompt(&self, memories: &[crate::memory::MemoryEntry]) -> String {
         let mut parts = Vec::new();
 
+        // [0] 用户定制上下文（身份文件）
+        if let Some(identity) = &self.identity_context {
+            parts.push(format!("[用户定制上下文]\n{}", identity));
+        }
+
         // [1] 身份描述
         parts.push("你是 RRClaw，一个安全优先的 AI 助手。".to_string());
 
@@ -1170,6 +1191,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         let reply = agent.process_message("你好").await.unwrap();
@@ -1218,6 +1240,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         let reply = agent.process_message("列出文件").await.unwrap();
@@ -1261,6 +1284,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         let reply = agent.process_message("test").await.unwrap();
@@ -1279,6 +1303,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("RRClaw"));
@@ -1300,6 +1325,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
         let prompt = agent.build_system_prompt(&[]);
         assert!(prompt.contains("shell"));
@@ -1317,6 +1343,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
         let prompt = agent.build_system_prompt(&[]);
         // 新决策原则应包含关键条目
@@ -1341,6 +1368,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
         let prompt = agent.build_system_prompt(&[]);
         // 精简后应明显短于旧版（旧版约 800+ 字符）
@@ -1368,6 +1396,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 应该路由到 git 工具的场景
@@ -1392,6 +1421,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // GitHub CLI 不应该触发路由
@@ -1411,6 +1441,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 普通命令让 LLM 自行选择
@@ -1463,6 +1494,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 确认回调: 始终允许
@@ -1517,6 +1549,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 确认回调: 始终拒绝
@@ -1569,6 +1602,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 设置一个会 panic 的确认回调（不应被调用）
@@ -1592,6 +1626,7 @@ mod tests {
             "test".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         for i in 0..60 {
@@ -1648,6 +1683,7 @@ mod tests {
             "deepseek-reasoner".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         let reply = agent.process_message("列出文件").await.unwrap();
@@ -1709,6 +1745,7 @@ mod tests {
             "test-model".to_string(),
             0.7,
             vec![],
+            None,
         );
 
         // 第一轮
@@ -1854,7 +1891,7 @@ mod tests {
             Box::new(MockMemory),
             test_policy(),
             "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![],
+            "test-model".to_string(), 0.7, vec![], None,
         );
         fill_history(&mut agent, 19); // 38 条
         let original_len = agent.history.len();
@@ -1877,7 +1914,7 @@ mod tests {
             Box::new(MockMemory),
             test_policy(),
             "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![],
+            "test-model".to_string(), 0.7, vec![], None,
         );
         fill_history(&mut agent, 20); // 40 条
         agent.compact_history_if_needed().await;
@@ -1906,7 +1943,7 @@ mod tests {
             Box::new(MockMemory),
             test_policy(),
             "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![],
+            "test-model".to_string(), 0.7, vec![], None,
         );
         fill_history(&mut agent, 25); // 50 条
         agent.compact_history_if_needed().await;
@@ -1929,7 +1966,7 @@ mod tests {
             Box::new(MockMemory),
             test_policy(),
             "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![],
+            "test-model".to_string(), 0.7, vec![], None,
         );
         fill_history(&mut agent, 20); // 40 条
         // 记录最后 10 条内容
@@ -2026,7 +2063,7 @@ mod tests {
         }]);
         let agent = Agent::new(
             Box::new(provider), vec![], Box::new(MockMemory),
-            test_policy(), "t".into(), "h".into(), "m".into(), 0.7, vec![],
+            test_policy(), "t".into(), "h".into(), "m".into(), 0.7, vec![], None,
         );
         let messages = vec![make_chat("user", "你好")];
         let result = agent.summarize_history(&messages).await.unwrap();
