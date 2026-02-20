@@ -312,6 +312,11 @@ impl Agent {
         &self.policy
     }
 
+    /// 获取所有已加载工具的名称列表
+    pub fn tool_names(&self) -> Vec<&str> {
+        self.tools.iter().map(|t| t.name()).collect()
+    }
+
     /// 清理 history 中无效的消息序列
     /// - 移除开头孤立的 ToolResult（没有对应的 AssistantToolCalls）
     /// - 移除中间孤立的 ToolResult（前面不是 AssistantToolCalls 或 ToolResult）

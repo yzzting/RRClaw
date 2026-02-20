@@ -212,6 +212,9 @@ async fn handle_slash_command(
             let rest = cmd["skill".len()..].trim();
             cmd_skill(rest, agent, skills)?;
         }
+        "mcp" => {
+            cmd_mcp(agent);
+        }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
         }
@@ -689,6 +692,45 @@ fn save_provider_to_config(name: &str, pc: &ProviderConfig, path: Option<&std::p
     Ok(())
 }
 
+/// /mcp — 列出当前已加载的 MCP 工具
+fn cmd_mcp(agent: &Agent) {
+    let all_tools = agent.tool_names();
+    let mcp_tools: Vec<&str> = all_tools
+        .iter()
+        .copied()
+        .filter(|n| n.starts_with("mcp_"))
+        .collect();
+
+    if mcp_tools.is_empty() {
+        println!("当前没有已加载的 MCP 工具。");
+        println!("在 ~/.rrclaw/config.toml 中配置 [mcp.servers.<name>] 后重启生效。");
+        return;
+    }
+
+    // 按 server 分组
+    use std::collections::BTreeMap;
+    let mut by_server: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for name in &mcp_tools {
+        // name 格式: mcp_{server}_{tool}
+        let rest = &name["mcp_".len()..];
+        // server name 可能含 '-'，tool name 部分以第一个 '_' 分隔
+        let (server, tool) = if let Some(pos) = rest.find('_') {
+            (&rest[..pos], &rest[pos + 1..])
+        } else {
+            (rest, "")
+        };
+        by_server.entry(server).or_default().push(tool);
+    }
+
+    println!("已加载 MCP 工具（共 {} 个）:", mcp_tools.len());
+    for (server, tools) in &by_server {
+        println!("  [{}] {} 个工具:", server, tools.len());
+        for tool in tools {
+            println!("    mcp_{}_{}", server, tool);
+        }
+    }
+}
+
 /// 打印帮助信息
 fn print_help() {
     println!("可用命令:");
@@ -698,6 +740,8 @@ fn print_help() {
     println!("  /config                显示当前配置");
     println!("  /switch                切换 Provider + 模型");
     println!("  /apikey                修改 API Key 或 Base URL");
+    println!();
+    println!("  /mcp                   列出已加载的 MCP 工具");
     println!();
     println!("  /skill                 列出所有可用技能");
     println!("  /skill <name>          加载技能指令到当前对话");
