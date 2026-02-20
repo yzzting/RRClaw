@@ -44,11 +44,18 @@ const MAX_FILE_BYTES: usize = 8 * 1024;
 pub fn load_identity_context(workspace_dir: &Path, data_dir: &Path) -> Option<String> {
     let mut sections: Vec<(String, String)> = Vec::new(); // (section_name, content)
 
+    // 辅助闭包：只在内容非纯空白时加入
+    let mut push_if_nonempty = |name: &str, content: String| {
+        if !content.trim().is_empty() {
+            sections.push((name.to_string(), content));
+        }
+    };
+
     // 1. 全局用户偏好文件
     for file in GLOBAL_FILES {
         let path = data_dir.join(file.relative_path);
         if let Some(content) = read_file_safe(&path) {
-            sections.push((file.section_name.to_string(), content));
+            push_if_nonempty(file.section_name, content);
         }
     }
 
@@ -57,16 +64,16 @@ pub fn load_identity_context(workspace_dir: &Path, data_dir: &Path) -> Option<St
     let global_soul_path = data_dir.join(SOUL_GLOBAL);
 
     if let Some(content) = read_file_safe(&project_soul_path) {
-        sections.push(("Agent 人格（项目级）".to_string(), content));
+        push_if_nonempty("Agent 人格（项目级）", content);
     } else if let Some(content) = read_file_safe(&global_soul_path) {
-        sections.push(("Agent 人格".to_string(), content));
+        push_if_nonempty("Agent 人格", content);
     }
 
     // 3. 项目行为约定文件
     for file in PROJECT_FILES {
         let path = workspace_dir.join(file.relative_path);
         if let Some(content) = read_file_safe(&path) {
-            sections.push((file.section_name.to_string(), content));
+            push_if_nonempty(file.section_name, content);
         }
     }
 
@@ -90,14 +97,11 @@ pub fn load_identity_context(workspace_dir: &Path, data_dir: &Path) -> Option<St
 }
 
 /// 安全读取文件内容
-/// - 文件不存在：返回 None（静默）
-/// - 超出大小限制：截断后返回
-/// - 空文件：返回 None
+/// - 文件不存在：返回 None（静默，不报错）
+/// - 超出大小限制：在 UTF-8 字符边界截断后返回
+/// - 空文件或纯空白：由调用方过滤
 fn read_file_safe(path: &Path) -> Option<String> {
-    if !path.exists() {
-        return None;
-    }
-
+    // 直接读取，在 Err 分支区分"不存在"与其他 IO 错误，避免 exists() 的 TOCTOU 窗口
     match std::fs::read(path) {
         Ok(bytes) => {
             if bytes.is_empty() {
@@ -116,21 +120,21 @@ fn read_file_safe(path: &Path) -> Option<String> {
                 &bytes
             };
 
-            // 在 UTF-8 字符边界处截断
+            // 在 UTF-8 字符边界处截断：valid_up_to() 保证前缀合法，safe unwrap
             match std::str::from_utf8(truncated) {
                 Ok(s) => Some(s.to_string()),
                 Err(e) => {
-                    // 截取到最后一个合法 UTF-8 边界
                     let valid_up_to = e.valid_up_to();
                     if valid_up_to == 0 {
                         return None;
                     }
-                    // safety: valid_up_to 是合法 UTF-8 边界
-                    let s = unsafe { std::str::from_utf8_unchecked(&truncated[..valid_up_to]) };
+                    let s = std::str::from_utf8(&truncated[..valid_up_to])
+                        .expect("valid_up_to guarantees valid UTF-8");
                     Some(format!("{}\n\n[文件内容已截断]", s))
                 }
             }
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             debug!("读取身份文件失败（忽略）: {:?} - {}", path, e);
             None
@@ -251,20 +255,14 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_only_file_treated_as_empty_after_trim() {
+    fn whitespace_only_file_returns_none() {
         let workspace = tempdir().unwrap();
         let data_dir = tempdir().unwrap();
         write_file(data_dir.path(), "USER.md", "   \n\n  ");
 
-        // read_file_safe 返回 Some("   \n\n  ")，但 sections 里 content.trim() 后为空
-        // 合并后 result.trim_end() 也为空，所以 None
-        // 注意：当前实现不对纯空白做二次过滤，但实际 inject 时 trim 掉了。
-        // 测试实际行为：只要文件非零字节，就会加载（即使内容全是空白）
-        // 这是可接受的 UX：用户自己写了空白文件，应该意识到
+        // 纯空白文件应被过滤，避免生成只有标题没有内容的空 section 注入 system prompt
         let result = load_identity_context(workspace.path(), data_dir.path());
-        // 文件非空（有空白字符），会被加载但 inject 后对 LLM 无影响
-        // 此测试仅验证不 panic
-        let _ = result;
+        assert!(result.is_none(), "纯空白文件不应生成任何 identity context");
     }
 
     // --- read_file_safe 测试 ---

@@ -1310,6 +1310,54 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_injects_identity_context_before_rrclaw_description() {
+        let identity = "### 用户偏好\n你是专属助手 Max，简洁直接".to_string();
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+            vec![],
+            Some(identity),
+        );
+        let prompt = agent.build_system_prompt(&[]);
+        // identity 内容应出现在 prompt 中
+        assert!(prompt.contains("你是专属助手 Max"));
+        assert!(prompt.contains("[用户定制上下文]"));
+        // identity 段应在 RRClaw 身份描述之前
+        let identity_pos = prompt.find("[用户定制上下文]").unwrap();
+        let rrclaw_pos = prompt.find("RRClaw").unwrap();
+        assert!(
+            identity_pos < rrclaw_pos,
+            "[用户定制上下文] 应在 RRClaw 描述之前，identity_pos={}, rrclaw_pos={}",
+            identity_pos,
+            rrclaw_pos
+        );
+    }
+
+    #[test]
+    fn system_prompt_no_identity_section_when_none() {
+        let agent = Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test".to_string(),
+            0.7,
+            vec![],
+            None,
+        );
+        let prompt = agent.build_system_prompt(&[]);
+        assert!(!prompt.contains("[用户定制上下文]"));
+    }
+
+    #[test]
     fn system_prompt_includes_tools() {
         let tool = MockTool {
             tool_name: "shell".to_string(),
