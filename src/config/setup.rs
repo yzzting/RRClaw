@@ -132,6 +132,7 @@ pub fn run_setup() -> Result<()> {
         },
         telegram: None,
         reliability: ReliabilityConfig::default(),
+        mcp: None,
     };
 
     // 写入配置文件

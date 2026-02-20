@@ -19,6 +19,8 @@ pub struct Config {
     pub telegram: Option<TelegramConfig>,
     #[serde(default)]
     pub reliability: ReliabilityConfig,
+    #[serde(default)]
+    pub mcp: Option<McpConfig>,
 }
 
 /// Telegram Bot 配置
@@ -93,6 +95,42 @@ impl Default for ReliabilityConfig {
             fallback_providers: vec![],
         }
     }
+}
+
+/// MCP 全局配置
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// key = server 名称（用于 tool 前缀）
+    #[serde(default)]
+    pub servers: HashMap<String, McpServerConfig>,
+}
+
+/// 单个 MCP Server 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    #[serde(flatten)]
+    pub transport: McpTransport,
+    /// 只暴露部分 tools（空 = 全部）
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+}
+
+/// MCP 传输方式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "transport", rename_all = "lowercase")]
+pub enum McpTransport {
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: HashMap<String, String>,
+    },
+    Sse {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
 }
 
 impl Default for DefaultConfig {
@@ -325,5 +363,124 @@ provider = "minimax"
     fn config_path_ends_with_rrclaw() {
         let path = Config::config_path().unwrap();
         assert!(path.ends_with(".rrclaw/config.toml"));
+    }
+
+    #[test]
+    fn mcp_stdio_config_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        let mcp = config.mcp.unwrap();
+        let fs_server = mcp.servers.get("filesystem").unwrap();
+        match &fs_server.transport {
+            McpTransport::Stdio { command, args, .. } => {
+                assert_eq!(command, "npx");
+                assert_eq!(args[0], "-y");
+                assert_eq!(args.len(), 3);
+            }
+            _ => panic!("应该是 stdio 传输"),
+        }
+        assert!(fs_server.allowed_tools.is_empty());
+    }
+
+    #[test]
+    fn mcp_sse_config_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp.servers.remote]
+transport = "sse"
+url = "https://mcp.example.com/mcp"
+[mcp.servers.remote.headers]
+Authorization = "Bearer token"
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        let mcp = config.mcp.unwrap();
+        let remote = mcp.servers.get("remote").unwrap();
+        match &remote.transport {
+            McpTransport::Sse { url, headers } => {
+                assert_eq!(url, "https://mcp.example.com/mcp");
+                assert_eq!(headers.get("Authorization").unwrap(), "Bearer token");
+            }
+            _ => panic!("应该是 sse 传输"),
+        }
+    }
+
+    #[test]
+    fn mcp_allowed_tools_filter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp.servers.fs]
+transport = "stdio"
+command = "npx"
+args = []
+allowed_tools = ["read_file", "list_dir"]
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        let mcp = config.mcp.unwrap();
+        let server = mcp.servers.get("fs").unwrap();
+        assert_eq!(server.allowed_tools, vec!["read_file", "list_dir"]);
+    }
+
+    #[test]
+    fn no_mcp_config_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[default]
+provider = "deepseek"
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        assert!(config.mcp.is_none());
+    }
+
+    #[test]
+    fn mcp_stdio_with_env() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp.servers.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+[mcp.servers.github.env]
+GITHUB_TOKEN = "ghp_xxx"
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        let mcp = config.mcp.unwrap();
+        let github = mcp.servers.get("github").unwrap();
+        match &github.transport {
+            McpTransport::Stdio { env, .. } => {
+                assert_eq!(env.get("GITHUB_TOKEN").unwrap(), "ghp_xxx");
+            }
+            _ => panic!("应该是 stdio 传输"),
+        }
     }
 }

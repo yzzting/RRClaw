@@ -12,7 +12,7 @@ async-trait = "0.1"
 futures-util = "0.3"
 
 # HTTP 客户端
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
 
 # 序列化
 serde = { version = "1", features = ["derive"] }
@@ -47,6 +47,7 @@ dialoguer = "0.12.0"
 teloxide = { version = "0.17.0", features = ["macros"] }
 toml_edit = "0.25.2"
 shell-words = "1"
+rmcp = { version = "0.16", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -254,6 +254,7 @@ mod tests {
             security: SecurityConfig::default(),
             telegram: None,
             reliability: crate::config::ReliabilityConfig::default(),
+            mcp: None,
         }
     }
 
