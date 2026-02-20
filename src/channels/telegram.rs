@@ -55,20 +55,16 @@ impl AgentFactory {
                 retry_config,
             ))
         };
-        let data_dir = {
+        let (data_dir, log_dir) = {
             let base_dirs = directories::BaseDirs::new()
                 .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
-            base_dirs.home_dir().join(".rrclaw").join("data")
-        };
-        let log_dir = {
-            let base_dirs = directories::BaseDirs::new()
-                .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
-            base_dirs.home_dir().join(".rrclaw").join("logs")
+            let rrclaw = base_dirs.home_dir().join(".rrclaw");
+            (rrclaw.join("data"), rrclaw.join("logs"))
         };
         let config_path = crate::config::Config::config_path()?;
         let tools = crate::tools::create_tools(
             self.config.clone(),
-            data_dir,
+            data_dir.clone(),
             log_dir,
             config_path,
             vec![], // Telegram 暂不加载 skills
@@ -87,12 +83,17 @@ impl AgentFactory {
             provider,
             tools,
             Box::new(self.memory.clone()),
-            policy,
+            policy.clone(),
             provider_key.to_string(),
             provider_config.base_url.clone(),
             self.config.default.model.clone(),
             self.config.default.temperature,
             vec![], // Telegram 暂不加载 skills
+            // identity 文件在 ~/.rrclaw/，data_dir 是 ~/.rrclaw/data/，取父目录
+            crate::agent::identity::load_identity_context(
+                &policy.workspace_dir,
+                data_dir.parent().unwrap_or(data_dir.as_path()),
+            ),
         ))
     }
 }
