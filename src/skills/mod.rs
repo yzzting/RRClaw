@@ -6,6 +6,7 @@ use color_eyre::eyre::{eyre, Result};
 const BUILTIN_CODE_REVIEW: &str = include_str!("builtin/code-review.md");
 const BUILTIN_RUST_DEV: &str = include_str!("builtin/rust-dev.md");
 const BUILTIN_GIT_COMMIT: &str = include_str!("builtin/git-commit.md");
+const BUILTIN_MCP_INSTALL: &str = include_str!("builtin/mcp-install.md");
 
 /// Skill 来源（决定是否可删除、显示标签）
 #[derive(Debug, Clone, PartialEq)]
@@ -262,6 +263,7 @@ pub fn builtin_skills() -> Vec<SkillMeta> {
         ("code-review", BUILTIN_CODE_REVIEW),
         ("rust-dev", BUILTIN_RUST_DEV),
         ("git-commit", BUILTIN_GIT_COMMIT),
+        ("mcp-install", BUILTIN_MCP_INSTALL),
     ];
     for (key, content) in builtins {
         match parse_skill_md(content) {
@@ -466,13 +468,14 @@ mod tests {
     // --- builtin_skills 测试 ---
 
     #[test]
-    fn builtin_skills_returns_three() {
+    fn builtin_skills_returns_four() {
         let skills = builtin_skills();
-        assert_eq!(skills.len(), 3);
+        assert_eq!(skills.len(), 4);
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"code-review"));
         assert!(names.contains(&"rust-dev"));
         assert!(names.contains(&"git-commit"));
+        assert!(names.contains(&"mcp-install"));
         // 所有内置 skill 都应有非空 description
         for s in &skills {
             assert!(!s.description.is_empty(), "skill '{}' description 为空", s.name);
