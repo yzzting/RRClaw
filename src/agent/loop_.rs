@@ -312,6 +312,11 @@ impl Agent {
         &self.policy
     }
 
+    /// 切换自主级别（运行时生效，不持久化）
+    pub fn set_autonomy(&mut self, level: crate::security::AutonomyLevel) {
+        self.policy.autonomy = level;
+    }
+
     /// 获取所有已加载工具的名称列表
     pub fn tool_names(&self) -> Vec<&str> {
         self.tools.iter().map(|t| t.name()).collect()

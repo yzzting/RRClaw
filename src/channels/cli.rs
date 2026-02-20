@@ -215,6 +215,9 @@ async fn handle_slash_command(
         "mcp" => {
             cmd_mcp(agent);
         }
+        "mode" => {
+            cmd_mode(agent)?;
+        }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
         }
@@ -692,6 +695,63 @@ fn save_provider_to_config(name: &str, pc: &ProviderConfig, path: Option<&std::p
     Ok(())
 }
 
+/// /mode — 切换 Agent 自主级别（ReadOnly / Supervised / Full）
+fn cmd_mode(agent: &mut Agent) -> Result<()> {
+    use crate::security::AutonomyLevel;
+    use dialoguer::Select;
+
+    let current = &agent.policy().autonomy;
+    let modes = [
+        ("supervised", "Supervised — 执行前需要用户确认（默认）"),
+        ("full",       "Full       — 自主执行，无需确认"),
+        ("read-only",  "ReadOnly   — 只读，不执行任何工具"),
+    ];
+
+    let default_idx = modes
+        .iter()
+        .position(|(k, _)| match current {
+            AutonomyLevel::Supervised => *k == "supervised",
+            AutonomyLevel::Full => *k == "full",
+            AutonomyLevel::ReadOnly => *k == "read-only",
+        })
+        .unwrap_or(0);
+
+    let labels: Vec<&str> = modes.iter().map(|(_, label)| *label).collect();
+    let idx = Select::new()
+        .with_prompt("选择安全模式")
+        .items(&labels)
+        .default(default_idx)
+        .interact()
+        .wrap_err("选择安全模式失败")?;
+
+    let (key, _) = modes[idx];
+    let new_level = match key {
+        "full" => AutonomyLevel::Full,
+        "read-only" => AutonomyLevel::ReadOnly,
+        _ => AutonomyLevel::Supervised,
+    };
+
+    if new_level == *current {
+        println!("无变化。");
+        return Ok(());
+    }
+
+    // 运行时切换
+    agent.set_autonomy(new_level);
+
+    // 持久化到 config.toml
+    let config_path = Config::config_path()?;
+    let content = std::fs::read_to_string(&config_path)?;
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .wrap_err("解析配置文件失败")?;
+    doc["security"]["autonomy"] = toml_edit::value(key);
+    std::fs::write(&config_path, doc.to_string())?;
+
+    println!("已切换到 {} 模式。", key);
+    Ok(())
+}
+
 /// /mcp — 列出当前已加载的 MCP 工具
 fn cmd_mcp(agent: &Agent) {
     let all_tools = agent.tool_names();
@@ -741,6 +801,7 @@ fn print_help() {
     println!("  /switch                切换 Provider + 模型");
     println!("  /apikey                修改 API Key 或 Base URL");
     println!();
+    println!("  /mode                  切换安全模式（supervised/full/read-only）");
     println!("  /mcp                   列出已加载的 MCP 工具");
     println!();
     println!("  /skill                 列出所有可用技能");
