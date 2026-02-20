@@ -790,47 +790,85 @@ MCP 工具（P4 已规划）也可以调 HTTP API，但：
 |------|------|---------|
 | DNS 重绑定 | 不防御 | 可在 reqwest 中 hook DNS 解析做二次检查（复杂） |
 | HTTPS 证书验证 | 始终开启（rustls） | 已是最佳实践，不提供跳过选项 |
-| 重定向 | reqwest 默认跟随（最多 10 次） | 重定向后的 URL 不再做 SSRF 检查（已知限制）|
+| 重定向 | ✅ 已禁用自动重定向（Policy::none()） | 3xx 响应直接返回，LLM 自行决定是否跟随 |
 | 认证 | 依赖 headers 字段 | 不内置 Basic/OAuth，LLM 自行构造 Authorization header |
 | 响应编码 | 只处理 UTF-8 + 二进制提示 | 未来可加 charset 检测 |
 
 ---
 
-## 十一、动态白名单添加（LLM 询问用户）
+## 十一、白名单与动态提示（待实现）
 
-### 11.1 背景
+> **状态**: 架构已就绪，业务逻辑待实现。
 
-当用户请求一个不在白名单的内网地址时，当前流程直接拒绝。用户希望：
-1. LLM 可以询问用户"是否允许访问这个地址？"
-2. 用户同意后，自动添加到白名单
-3. 重新执行请求
+### 11.1 已实现：config_suggestion 字段
 
-### 11.2 设计方案
+`ToolResult` 已新增 `config_suggestion: Option<String>` 字段（`src/tools/traits.rs`），用于在工具执行失败时向 LLM 提供结构化的配置建议，替代在错误字符串中嵌入魔法分隔符的脆弱方案。
 
-**解决方案**：在错误信息中用 `|` 分隔符编码可配置解决提示。
-
-http_request 被 SSRF 拦截时，返回带配置建议的错误信息：
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+    /// 可配置解决的建议（如"将此地址加入 http_allowed_hosts"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_suggestion: Option<String>,
+}
 ```
-"禁止访问私有IP 192.168.1.100|可使用 /config set security.http_allowed_hosts 添加 ["192.168.1.100"] 到白名单"
+
+### 11.2 待实现：静态白名单
+
+在 `config.toml` 中支持白名单，绕过 SSRF 防护：
+
+```toml
+[security]
+http_allowed_hosts = ["localhost", "192.168.1.100", "internal.company.com"]
 ```
 
-LLM 通过解析 `|` 字符识别这是可配置解决的错误，询问用户后可通过 ConfigTool 添加白名单。
+需要改动的文件：
 
-### 11.3 用户交互流程
+| 文件 | 改动 |
+|------|------|
+| `src/config/schema.rs` | `SecurityConfig` 新增 `http_allowed_hosts: Vec<String>` |
+| `src/security/policy.rs` | `SecurityPolicy` 新增 `http_allowed_hosts` + `is_http_host_allowed()` |
+| `src/tools/http.rs` | `pre_validate` 白名单检查（在 SSRF 检查前放行） |
+
+### 11.3 待实现：动态白名单（LLM 询问用户）
+
+SSRF 拦截时，通过 `config_suggestion` 向 LLM 传递配置建议：
+
+```rust
+// src/tools/http.rs check_ssrf_risk 改动
+if is_private_ip(ip) {
+    return Some(format!(
+        "禁止访问私有/保留 IP 地址（SSRF 防护）: {}",
+        ip
+    ));
+    // ToolResult 同时携带 config_suggestion:
+    // "可通过配置 security.http_allowed_hosts = [\"<ip>\"] 添加白名单"
+}
+```
+
+完整的用户交互流程：
 
 ```
 用户：帮我请求 http://192.168.1.100:8080/api
 LLM：[调用 http_request]
 
-http_request 返回错误：
-"禁止访问私有IP 192.168.1.100|可使用 /config set security.http_allowed_hosts 添加 ["192.168.1.100"] 到白名单"
+http_request 返回：
+  error: "禁止访问私有/保留 IP 地址（SSRF 防护）: 192.168.1.100"
+  config_suggestion: "可通过配置 security.http_allowed_hosts 添加白名单，
+                      使用 ConfigTool: {\"action\": \"set\",
+                      \"key\": \"security.http_allowed_hosts\",
+                      \"value\": [\"192.168.1.100\"]}"
 
-LLM：检测到可配置解决，询问用户：
-"检测到 192.168.1.100 是内网地址，不在白名单中。是否允许 RRClaw 访问此地址？
-[是(Y)/否(N)]"
+LLM（读取 config_suggestion 后）询问用户：
+  "192.168.1.100 是内网地址，当前被 SSRF 防护拦截。
+   是否允许 RRClaw 访问此地址？[是(Y)/否(N)]"
 
 用户：Y
 
-LLM：[调用 ConfigTool 添加白名单]
-[重新调用 http_request]
+LLM：[调用 ConfigTool 将 192.168.1.100 加入 http_allowed_hosts]
+     [重新调用 http_request]
 ```
+
+> **注意**：pre_validate 返回 `Option<String>` 而非 `ToolResult`，因此 SSRF 拦截路径的 `config_suggestion` 需要在 agent loop 的 pre_validate 拒绝处理中注入，或改造 pre_validate 的返回类型。当前 agent loop 将 pre_validate 错误直接格式化为 `[失败] {rejection}` 字符串推入历史，LLM 仍可从中读取提示并采取行动。
