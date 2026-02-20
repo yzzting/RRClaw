@@ -1045,7 +1045,6 @@ mod tests {
     use crate::providers::{ChatResponse, ToolCall};
     use crate::skills::SkillSource;
     use crate::tools::ToolResult;
-    use std::default::Default;
     use std::path::PathBuf;
 
     // --- Mock Provider ---
@@ -1128,7 +1127,6 @@ mod tests {
                 success: true,
                 output: self.result.clone(),
                 error: None,
-                ..Default::default()
             })
         }
     }

@@ -3,7 +3,6 @@ use color_eyre::eyre::{eyre, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
-use std::default::Default;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -138,7 +137,6 @@ impl Tool for HttpRequestTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!("不支持的 HTTP 方法: {}", method_str)),
-                    ..Default::default()
                 })
             }
         };
@@ -198,7 +196,6 @@ impl Tool for HttpRequestTool {
                     success: false,
                     output: String::new(),
                     error: Some(err_msg),
-                    ..Default::default()
                 });
             }
         };
@@ -288,14 +285,12 @@ impl Tool for HttpRequestTool {
             } else {
                 Some(output)
             },
-            ..Default::default()
         })
     }
 }
 
 /// 检查 host 是否有 SSRF 风险
 /// 返回 Some(原因) 表示有风险，None 表示安全
-/// 错误信息中包含 "|" 后缀表示可配置解决
 fn check_ssrf_risk(host: &str) -> Option<String> {
     // 1. 阻止 localhost 变体
     let host_lower = host.to_lowercase();
@@ -303,10 +298,7 @@ fn check_ssrf_risk(host: &str) -> Option<String> {
         || host_lower == "ip6-localhost"
         || host_lower == "ip6-loopback"
     {
-        return Some(format!(
-            "禁止访问 localhost（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
-            host, host
-        ));
+        return Some(format!("禁止访问 localhost（SSRF 防护）: {}", host));
     }
 
     // 2. 阻止云平台元数据接口（AWS/GCP/Azure）
@@ -317,18 +309,15 @@ fn check_ssrf_risk(host: &str) -> Option<String> {
         || host_lower.ends_with(".local")
         || host_lower.ends_with(".localhost")
     {
-        return Some(format!(
-            "禁止访问元数据/内网服务（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
-            host, host
-        ));
+        return Some(format!("禁止访问元数据/内网服务（SSRF 防护）: {}", host));
     }
 
     // 3. 尝试解析为 IP 地址，检查是否为私有 IP
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_private_ip(ip) {
             return Some(format!(
-                "禁止访问私有/保留 IP 地址（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
-                ip, ip
+                "禁止访问私有/保留 IP 地址（SSRF 防护）: {}",
+                ip
             ));
         }
     }

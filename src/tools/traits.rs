@@ -6,14 +6,11 @@ use crate::providers::ToolSpec;
 use crate::security::SecurityPolicy;
 
 /// 工具执行结果
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub success: bool,
     pub output: String,
     pub error: Option<String>,
-    /// 是否可配置解决（如添加到白名单），返回配置建议
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_suggestion: Option<String>,
 }
 
 /// 工具抽象

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result};
-use std::default::Default;
 use std::path::Path;
 
 use crate::security::SecurityPolicy;
@@ -51,7 +50,6 @@ impl Tool for FileReadTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("路径不在允许范围内: {}", path.display())),
-                ..Default::default()
             });
         }
 
@@ -60,13 +58,11 @@ impl Tool for FileReadTool {
                 success: true,
                 output: content,
                 error: None,
-                ..Default::default()
             }),
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("读取文件失败: {}", e)),
-                ..Default::default()
             }),
         }
     }
@@ -130,7 +126,6 @@ impl Tool for FileWriteTool {
                 success: false,
                 output: String::new(),
                 error: Some("当前为只读模式，不允许写入文件".to_string()),
-                ..Default::default()
             });
         }
 
@@ -142,7 +137,6 @@ impl Tool for FileWriteTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("路径不在允许范围内: {}", path.display())),
-                ..Default::default()
             });
         }
 
@@ -160,13 +154,11 @@ impl Tool for FileWriteTool {
                 success: true,
                 output: format!("已写入 {} 字节到 {}", content.len(), path.display()),
                 error: None,
-                ..Default::default()
             }),
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("写入文件失败: {}", e)),
-                ..Default::default()
             }),
         }
     }
