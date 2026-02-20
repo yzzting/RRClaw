@@ -115,22 +115,28 @@ env = {}
    - GitHub：git clone + npm install
    - 本地：检查并安装
    - SSE：无需安装
-4. **写入配置**：用 shell 工具将配置追加到 `~/.rrclaw/config.toml`
+4. **写入配置**：用 `config` 工具的 `append` 操作追加到 `~/.rrclaw/config.toml`
 5. **加载 MCP**：通知用户需要重启才能生效
 
 ---
 
 ## config.toml 追加示例
 
-```bash
-# 追加配置到 config.toml
-cat >> ~/.rrclaw/config.toml << 'EOF'
+使用 `config` 工具（**不要用 shell `cat >>`**，因为 shell 工具受 workspace_only 限制无法写入 ~/.rrclaw）：
 
+```json
+{
+  "action": "append",
+  "value": "[mcp.servers.{name}]\ntransport = \"stdio\"\ncommand = \"npx\"\nargs = [\"-y\", \"@org/package\"]"
+}
+```
+
+等价的 TOML 内容：
+```toml
 [mcp.servers.{name}]
 transport = "stdio"
 command = "npx"
 args = ["-y", "@org/package"]
-EOF
 ```
 
 ---

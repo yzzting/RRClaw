@@ -18,7 +18,8 @@ impl Tool for ConfigTool {
 
     fn description(&self) -> &str {
         "读取或修改 RRClaw 配置。支持操作: \
-         get（读取配置项）、set（修改配置项）、list（列出所有配置）。\
+         get（读取配置项）、set（修改已有配置项）、list（列出所有配置）、\
+         append（追加新配置段，用于添加 MCP server 等新节）。\
          修改会写入 ~/.rrclaw/config.toml，部分设置重启后生效。"
     }
 
@@ -28,8 +29,8 @@ impl Tool for ConfigTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get", "set", "list"],
-                    "description": "操作类型: get 读取, set 修改, list 列出全部"
+                    "enum": ["get", "set", "list", "append"],
+                    "description": "操作类型: get 读取, set 修改已有项, list 列出全部, append 追加新配置段（如 MCP server）"
                 },
                 "key": {
                     "type": "string",
@@ -37,7 +38,7 @@ impl Tool for ConfigTool {
                 },
                 "value": {
                     "type": "string",
-                    "description": "set 操作时的新值"
+                    "description": "set 操作时的新值；append 操作时为要追加的 TOML 文本（如 '[mcp.servers.xxx]\\ntransport = \"stdio\"\\n...'）"
                 }
             },
             "required": ["action"]
@@ -76,6 +77,7 @@ impl Tool for ConfigTool {
                 args.get("key").and_then(|v| v.as_str()),
                 args.get("value").and_then(|v| v.as_str()),
             ),
+            "append" => config_append(args.get("value").and_then(|v| v.as_str())),
             _ => Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -185,6 +187,51 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
     Ok(ToolResult {
         success: true,
         output: format!("已将 {} 设置为 {}。部分设置重启后生效。", key, value),
+        error: None,
+    })
+}
+
+/// 追加新配置段到 config.toml（用于添加 MCP server 等新节）
+fn config_append(value: Option<&str>) -> Result<ToolResult> {
+    let toml_text = match value {
+        Some(v) if !v.trim().is_empty() => v,
+        _ => {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("缺少 value 参数（要追加的 TOML 内容）".to_string()),
+            });
+        }
+    };
+
+    // 验证追加内容是合法的 TOML
+    if let Err(e) = toml_text.parse::<toml_edit::DocumentMut>() {
+        return Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(format!("追加内容不是合法的 TOML: {}", e)),
+        });
+    }
+
+    let config_path = Config::config_path()?;
+    let existing = std::fs::read_to_string(&config_path)?;
+
+    // 确保文件末尾有换行，再追加新内容
+    let mut new_content = existing;
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push('\n');
+    new_content.push_str(toml_text.trim_start());
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+
+    std::fs::write(&config_path, &new_content)?;
+
+    Ok(ToolResult {
+        success: true,
+        output: "配置已追加，重启 RRClaw 后生效。".to_string(),
         error: None,
     })
 }
@@ -404,5 +451,49 @@ model = "test"
 "#;
         let mut doc = content.parse::<toml_edit::DocumentMut>().unwrap();
         assert!(!set_toml_value(&mut doc, &["nonexistent", "key"], "value"));
+    }
+
+    #[test]
+    fn config_append_adds_new_section() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[default]\nprovider = \"deepseek\"\n",
+        )
+        .unwrap();
+
+        // 测试 config_append 的核心逻辑：追加后文件包含新 section
+        let new_toml = "[mcp.servers.test]\ntransport = \"stdio\"\ncommand = \"npx\"\n";
+        let existing = std::fs::read_to_string(&config_path).unwrap();
+        let mut new_content = existing;
+        if !new_content.ends_with('\n') {
+            new_content.push('\n');
+        }
+        new_content.push('\n');
+        new_content.push_str(new_toml.trim_start());
+
+        std::fs::write(&config_path, &new_content).unwrap();
+
+        let result = std::fs::read_to_string(&config_path).unwrap();
+        assert!(result.contains("[default]"));
+        assert!(result.contains("[mcp.servers.test]"));
+        assert!(result.contains("transport = \"stdio\""));
+        // 验证合并后的 TOML 仍然合法
+        assert!(result.parse::<toml_edit::DocumentMut>().is_ok());
+    }
+
+    #[test]
+    fn config_append_rejects_invalid_toml() {
+        let result = config_append(Some("not valid [[ toml"));
+        assert!(result.is_err() || matches!(result.unwrap(), r if !r.success));
+    }
+
+    #[test]
+    fn config_append_rejects_missing_value() {
+        let result = config_append(None);
+        let tool_result = result.unwrap();
+        assert!(!tool_result.success);
+        assert!(tool_result.error.is_some());
     }
 }
