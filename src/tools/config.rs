@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use color_eyre::eyre::Result;
 use serde_json::json;
+use std::default::Default;
 
 use crate::config::Config;
 use crate::security::SecurityPolicy;
@@ -82,6 +83,7 @@ impl Tool for ConfigTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("未知操作: {}", action)),
+                ..Default::default()
             }),
         }
     }
@@ -96,6 +98,7 @@ fn config_list() -> Result<ToolResult> {
         success: true,
         output: sanitized,
         error: None,
+        ..Default::default()
     })
 }
 
@@ -108,6 +111,7 @@ fn config_get(key: Option<&str>) -> Result<ToolResult> {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 key 参数".to_string()),
+                ..Default::default()
             });
         }
     };
@@ -134,12 +138,14 @@ fn config_get(key: Option<&str>) -> Result<ToolResult> {
                 success: true,
                 output: format!("{} = {}", key, display),
                 error: None,
+                ..Default::default()
             })
         }
         None => Ok(ToolResult {
             success: false,
             output: String::new(),
             error: Some(format!("配置项 '{}' 不存在", key)),
+            ..Default::default()
         }),
     }
 }
@@ -153,6 +159,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 key 参数".to_string()),
+                ..Default::default()
             });
         }
     };
@@ -163,6 +170,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 value 参数".to_string()),
+                ..Default::default()
             });
         }
     };
@@ -179,6 +187,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
             success: false,
             output: String::new(),
             error: Some(format!("无法设置配置项 '{}'，路径不存在或不合法", key)),
+            ..Default::default()
         });
     }
 
@@ -188,6 +197,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
         success: true,
         output: format!("已将 {} 设置为 {}。部分设置重启后生效。", key, value),
         error: None,
+        ..Default::default()
     })
 }
 
@@ -200,6 +210,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 value 参数（要追加的 TOML 内容）".to_string()),
+                ..Default::default()
             });
         }
     };
@@ -210,6 +221,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
             success: false,
             output: String::new(),
             error: Some(format!("追加内容不是合法的 TOML: {}", e)),
+            ..Default::default()
         });
     }
 
@@ -233,6 +245,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
         success: true,
         output: "配置已追加，重启 RRClaw 后生效。".to_string(),
         error: None,
+        ..Default::default()
     })
 }
 

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use color_eyre::eyre::Result;
+use std::default::Default;
 use std::sync::Arc;
 
 use rmcp::model::{CallToolRequestParams, RawContent, ResourceContents, Tool as McpToolDef};
@@ -100,12 +101,14 @@ impl Tool for McpTool {
                     success: !is_error,
                     output: if is_error { String::new() } else { output.clone() },
                     error: if is_error { Some(output) } else { None },
+                    ..Default::default()
                 })
             }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("MCP 调用失败: {}", e)),
+                ..Default::default()
             }),
         }
     }

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use color_eyre::eyre::{eyre, Result};
 use serde_json::json;
+use std::default::Default;
 use tracing::debug;
 
 use crate::security::SecurityPolicy;
@@ -81,6 +82,7 @@ impl Tool for GitTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!("{}", e)),
+                    ..Default::default()
                 });
             }
         };
@@ -103,6 +105,7 @@ impl Tool for GitTool {
                         success: true,
                         output: if stdout.is_empty() { stderr } else { stdout },
                         error: None,
+                        ..Default::default()
                     })
                 } else {
                     Ok(ToolResult {
@@ -113,6 +116,7 @@ impl Tool for GitTool {
                         } else {
                             stderr
                         }),
+                        ..Default::default()
                     })
                 }
             }
@@ -120,6 +124,7 @@ impl Tool for GitTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("执行 git 命令失败: {}", e)),
+                ..Default::default()
             }),
         }
     }

@@ -1,3 +1,4 @@
+use std::default::Default;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -193,6 +194,7 @@ impl Tool for SelfInfoTool {
                         "未知查询类型: '{}'. 可选: config, paths, provider, stats, help",
                         query
                     )),
+                    ..Default::default()
                 });
             }
         };
@@ -201,6 +203,7 @@ impl Tool for SelfInfoTool {
             success: true,
             output,
             error: None,
+            ..Default::default()
         })
     }
 }
