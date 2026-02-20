@@ -9,6 +9,7 @@ use tracing::{debug, info, warn};
 use crate::agent::Agent;
 use crate::config::Config;
 use crate::memory::{Memory, SqliteMemory};
+use crate::providers::{ReliableProvider, RetryConfig};
 use crate::security::SecurityPolicy;
 
 /// Agent 工厂: 为每个 chat 创建独立的 Agent
@@ -31,7 +32,29 @@ impl AgentFactory {
             .get(provider_key)
             .ok_or_else(|| color_eyre::eyre::eyre!("Provider '{}' 未配置", provider_key))?;
 
-        let provider = crate::providers::create_provider(provider_config);
+        let raw_provider = crate::providers::create_provider(provider_config);
+        let retry_config = RetryConfig {
+            max_retries: self.config.reliability.max_retries,
+            initial_backoff_ms: self.config.reliability.initial_backoff_ms,
+            ..Default::default()
+        };
+        let fallback_providers: Vec<Box<dyn crate::providers::Provider>> = self
+            .config
+            .reliability
+            .fallback_providers
+            .iter()
+            .filter_map(|name| self.config.providers.get(name))
+            .map(|pc| crate::providers::create_provider(pc))
+            .collect();
+        let provider: Box<dyn crate::providers::Provider> = if fallback_providers.is_empty() {
+            Box::new(ReliableProvider::new(raw_provider, retry_config))
+        } else {
+            Box::new(ReliableProvider::with_fallbacks(
+                raw_provider,
+                fallback_providers,
+                retry_config,
+            ))
+        };
         let data_dir = {
             let base_dirs = directories::BaseDirs::new()
                 .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
