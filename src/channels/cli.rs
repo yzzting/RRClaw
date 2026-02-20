@@ -85,6 +85,7 @@ pub async fn run_repl(
     memory: &SqliteMemory,
     config: &Config,
     skills: Vec<SkillMeta>,
+    data_dir: &std::path::Path,
 ) -> Result<()> {
     setup_cli_confirm(agent);
 
@@ -130,7 +131,8 @@ pub async fn run_repl(
 
                 // 斜杠命令
                 if let Some(cmd) = input.strip_prefix('/') {
-                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills).await?;
+                    let workspace_dir = agent.policy().workspace_dir.clone();
+                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir).await?;
                     continue;
                 }
 
@@ -170,6 +172,7 @@ pub async fn run_repl(
 }
 
 /// 处理斜杠命令
+#[allow(clippy::too_many_arguments)]
 async fn handle_slash_command(
     cmd: &str,
     agent: &mut Agent,
@@ -177,6 +180,8 @@ async fn handle_slash_command(
     memory: &SqliteMemory,
     config: &Config,
     skills: &[SkillMeta],
+    data_dir: &std::path::Path,
+    workspace_dir: std::path::PathBuf,
 ) -> Result<()> {
     let name = cmd.split_whitespace().next().unwrap_or(cmd);
 
@@ -217,6 +222,11 @@ async fn handle_slash_command(
         }
         "mode" => {
             cmd_mode(agent)?;
+        }
+        "identity" => {
+            // 切掉命令名，剩余部分作为参数
+            let rest = cmd["identity".len()..].trim();
+            cmd_identity(rest, agent, data_dir, workspace_dir)?;
         }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
@@ -370,6 +380,175 @@ fn cmd_skill_show(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
     }
     Ok(())
 }
+
+// ─── /identity 命令实现 ─────────────────────────────────────────────────
+
+/// /identity 命令入口 —— 解析子命令后分发
+fn cmd_identity(rest: &str, agent: &mut Agent, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+    let mut parts = rest.splitn(2, ' ');
+    let sub = parts.next().unwrap_or("").trim();
+    let arg = parts.next().map(|s| s.trim());
+
+    match sub {
+        "" | "status" => cmd_identity_status(data_dir, workspace_dir),
+        "show" => cmd_identity_show(arg, data_dir, workspace_dir),
+        "edit" => cmd_identity_edit(arg, data_dir, workspace_dir),
+        "reload" => {
+            agent.reload_identity(&workspace_dir, data_dir);
+            println!("✓ 身份文件已重新加载，下次对话立即生效。");
+            Ok(())
+        }
+        other => {
+            println!("未知子命令 '{}'。用 /identity 查看帮助。", other);
+            Ok(())
+        }
+    }
+}
+
+/// /identity（状态总览）实现
+fn cmd_identity_status(data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+    println!("身份文件状态:\n");
+
+    let files = [
+        ("USER.md（全局用户偏好）", data_dir.join("USER.md"), true),
+        ("SOUL.md（全局 Agent 人格）", data_dir.join("SOUL.md"), true),
+        ("SOUL.md（项目 Agent 人格）", workspace_dir.join(".rrclaw/SOUL.md"), false),
+        ("AGENT.md（项目行为约定）", workspace_dir.join(".rrclaw/AGENT.md"), false),
+    ];
+
+    for (label, path, is_global) in &files {
+        let scope = if *is_global { "全局" } else { "项目" };
+        match std::fs::metadata(path) {
+            Ok(meta) => {
+                let size = meta.len();
+                println!("  ✓ {} [{}]", label, scope);
+                println!("    路径: {}", path.display());
+                println!("    大小: {} 字节", size);
+            }
+            Err(_) => {
+                println!("  ✗ {} [{}]（未创建）", label, scope);
+                println!("    路径: {}", path.display());
+            }
+        }
+        println!();
+    }
+
+    println!("命令:");
+    println!("  /identity edit user     编辑全局用户偏好");
+    println!("  /identity edit soul    编辑 Agent 人格");
+    println!("  /identity edit agent   编辑项目行为约定");
+    println!("  /identity show <type>  查看文件内容");
+    println!("  /identity reload       重新加载（立即生效）");
+    Ok(())
+}
+
+/// /identity edit <type> 实现
+fn cmd_identity_edit(file_type: Option<&str>, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+    let file_type = file_type.ok_or_else(|| eyre!("用法: /identity edit <user|soul|agent>"))?;
+
+    let (path, template) = match file_type {
+        "user" => (
+            data_dir.join("USER.md"),
+            TEMPLATE_USER,
+        ),
+        "soul" => {
+            // 优先打开项目级，不存在时打开全局
+            let project_path = workspace_dir.join(".rrclaw/SOUL.md");
+            let global_path = data_dir.join("SOUL.md");
+            let path = if project_path.exists() { project_path } else { global_path };
+            (path, TEMPLATE_SOUL)
+        }
+        "agent" => (
+            workspace_dir.join(".rrclaw/AGENT.md"),
+            TEMPLATE_AGENT,
+        ),
+        other => return Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+    };
+
+    // 文件不存在时创建目录和模板
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .wrap_err_with(|| format!("创建目录失败: {}", parent.display()))?;
+        }
+        std::fs::write(&path, template)
+            .wrap_err_with(|| format!("写入模板失败: {}", path.display()))?;
+        println!("✓ 已创建模板: {}", path.display());
+    }
+
+    // 用 $EDITOR 打开
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    std::process::Command::new(&editor)
+        .arg(&path)
+        .status()
+        .wrap_err_with(|| format!("打开编辑器失败: {}", editor))?;
+
+    println!("✓ 已保存。使用 /identity reload 立即生效，或重启 rrclaw。");
+    Ok(())
+}
+
+/// /identity show <type> 实现
+fn cmd_identity_show(file_type: Option<&str>, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+    let file_type = file_type.ok_or_else(|| eyre!("用法: /identity show <user|soul|agent>"))?;
+
+    let path = match file_type {
+        "user"  => data_dir.join("USER.md"),
+        "soul"  => {
+            let project = workspace_dir.join(".rrclaw/SOUL.md");
+            if project.exists() { project } else { data_dir.join("SOUL.md") }
+        }
+        "agent" => workspace_dir.join(".rrclaw/AGENT.md"),
+        other   => return Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+    };
+
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            println!("=== {} ===\n", path.display());
+            println!("{}", content);
+        }
+        Err(_) => {
+            println!("文件不存在: {}", path.display());
+            println!("使用 /identity edit {} 创建。", file_type);
+        }
+    }
+    Ok(())
+}
+
+/// 身份文件模板
+const TEMPLATE_USER: &str = r#"## 用户信息
+
+- 主要技术栈：（填写你的技术背景）
+- 工作语言：中文
+- 回复风格：简洁直接，直接给结论和代码
+
+## 偏好约定
+
+- 代码示例省略明显的 use 声明
+- 不需要每次都加免责声明
+"#;
+
+const TEMPLATE_SOUL: &str = r#"你的名字是 Claw。
+
+- 说话风格：直接、简洁，不废话
+- 不用"当然！"、"好的！"等开头
+- 对代码问题给出具体答案
+- 如果不确定，直接说"不确定，需要查一下"
+"#;
+
+const TEMPLATE_AGENT: &str = r#"## 项目约定
+
+### 代码规范
+
+- （填写代码风格要求，如：所有代码必须通过 clippy）
+
+### Git 提交
+
+- （填写提交规范，如：feat/fix/docs/test 前缀）
+
+### 禁止事项
+
+- （填写项目中的禁止事项）
+"#;
 
 /// 获取用户全局 skills 目录 ~/.rrclaw/skills/
 fn global_skills_dir() -> Result<std::path::PathBuf> {
@@ -810,6 +989,11 @@ fn print_help() {
     println!("  /skill new <name>      创建新技能");
     println!("  /skill edit <name>     编辑技能（$EDITOR）");
     println!("  /skill delete <name>   删除技能");
+    println!();
+    println!("  /identity              查看身份文件状态");
+    println!("  /identity show <type>  查看身份文件内容（user/soul/agent）");
+    println!("  /identity edit <type>  编辑身份文件（$EDITOR）");
+    println!("  /identity reload       重新加载身份文件（立即生效）");
     println!();
     println!("  exit, quit             退出");
     println!();
