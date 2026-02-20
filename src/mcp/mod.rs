@@ -116,6 +116,8 @@ async fn connect_server(
                     for (k, v) in &env_clone {
                         cmd.env(k, v);
                     }
+                    // 抑制子进程的 stderr，避免 MCP server 自身的日志污染终端
+                    cmd.stderr(std::process::Stdio::null());
                 }),
             )?;
 
