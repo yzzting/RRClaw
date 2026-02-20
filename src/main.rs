@@ -183,6 +183,18 @@ async fn run_agent(
         http_allowed_hosts: config.security.http_allowed_hosts.clone(),
     };
 
+    // ─── 身份文件加载（P5-2）────────────────────────────────────────────
+    // identity 文件在 ~/.rrclaw/，而 data_dir 是 ~/.rrclaw/data/，取父目录
+    let rrclaw_home = data_dir.parent().unwrap_or(data_dir.as_path());
+    let identity_context = rrclaw::agent::identity::load_identity_context(
+        &policy.workspace_dir,
+        rrclaw_home,
+    );
+    if identity_context.is_some() {
+        tracing::info!("已加载用户身份文件");
+    }
+    // ─── 身份文件加载结束 ────────────────────────────────────────────────
+
     // 创建 Agent
     let mut agent = rrclaw::agent::Agent::new(
         provider,
@@ -194,12 +206,14 @@ async fn run_agent(
         model,
         config.default.temperature,
         skills.clone(),
+        identity_context,
     );
 
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
-        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills).await?,
+        // 传 rrclaw_home（~/.rrclaw/）而非 data_dir（~/.rrclaw/data/），供 /identity 命令使用
+        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills, rrclaw_home).await?,
     }
 
     // 退出时关闭 MCP 连接
