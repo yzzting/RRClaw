@@ -211,6 +211,7 @@ pub fn load_skill_content(name: &str, skills: &[SkillMeta]) -> Result<SkillConte
             "code-review" => BUILTIN_CODE_REVIEW,
             "rust-dev" => BUILTIN_RUST_DEV,
             "git-commit" => BUILTIN_GIT_COMMIT,
+            "mcp-install" => BUILTIN_MCP_INSTALL,
             _ => return Err(eyre!("内置技能 '{}' 缺少内容", meta.name)),
         };
         let (_name, _desc, _tags, body) = parse_skill_md(raw)?;
