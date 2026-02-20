@@ -17,6 +17,8 @@ pub struct Config {
     pub security: SecurityConfig,
     #[serde(default)]
     pub telegram: Option<TelegramConfig>,
+    #[serde(default)]
+    pub reliability: ReliabilityConfig,
 }
 
 /// Telegram Bot 配置
@@ -59,6 +61,38 @@ pub struct SecurityConfig {
     pub autonomy: AutonomyLevel,
     pub allowed_commands: Vec<String>,
     pub workspace_only: bool,
+}
+
+/// 可靠性配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReliabilityConfig {
+    /// 最大重试次数，默认 3
+    #[serde(default = "default_max_retries")]
+    pub max_retries: usize,
+    /// 初始退避毫秒，默认 500
+    #[serde(default = "default_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+    /// Fallback provider 名称列表（按顺序）
+    #[serde(default)]
+    pub fallback_providers: Vec<String>,
+}
+
+fn default_max_retries() -> usize {
+    3
+}
+
+fn default_initial_backoff_ms() -> u64 {
+    500
+}
+
+impl Default for ReliabilityConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_backoff_ms: 500,
+            fallback_providers: vec![],
+        }
+    }
 }
 
 impl Default for DefaultConfig {
@@ -122,6 +156,12 @@ auto_save = true
 autonomy = "supervised"
 allowed_commands = ["ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc", "cargo", "rustc"]
 workspace_only = true
+
+# 可靠性配置（可选）
+# [reliability]
+# max_retries = 3
+# initial_backoff_ms = 500
+# fallback_providers = ["glm", "minimax"]  # 主 Provider 失败时按顺序切换
 "#;
 
 impl Config {

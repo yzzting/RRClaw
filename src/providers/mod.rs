@@ -1,7 +1,9 @@
 pub mod claude;
 pub mod compatible;
+pub mod reliable;
 pub mod traits;
 
+pub use reliable::{ReliableProvider, RetryConfig};
 pub use traits::{
     ChatMessage, ChatResponse, ConversationMessage, Provider, StreamEvent, ToolCall, ToolSpec,
     ToolStatusKind,

@@ -253,6 +253,7 @@ mod tests {
             memory: MemoryConfig::default(),
             security: SecurityConfig::default(),
             telegram: None,
+            reliability: crate::config::ReliabilityConfig::default(),
         }
     }
 

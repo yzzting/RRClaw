@@ -88,7 +88,37 @@ async fn run_agent(
         .unwrap_or_else(|| config.default.model.clone());
 
     // 创建 Provider
-    let provider = rrclaw::providers::create_provider(provider_config);
+    let main_provider = rrclaw::providers::create_provider(provider_config);
+
+    // 创建 fallback providers（如果配置了）
+    let fallback_providers: Vec<Box<dyn rrclaw::providers::Provider>> = config
+        .reliability
+        .fallback_providers
+        .iter()
+        .filter_map(|name| config.providers.get(name))
+        .map(|pc| rrclaw::providers::create_provider(pc))
+        .collect();
+
+    // 包装为 ReliableProvider
+    let retry_config = rrclaw::providers::RetryConfig {
+        max_retries: config.reliability.max_retries,
+        initial_backoff_ms: config.reliability.initial_backoff_ms,
+        ..Default::default()
+    };
+
+    let provider: Box<dyn rrclaw::providers::Provider> =
+        if fallback_providers.is_empty() {
+            Box::new(rrclaw::providers::ReliableProvider::new(
+                main_provider,
+                retry_config,
+            ))
+        } else {
+            Box::new(rrclaw::providers::ReliableProvider::with_fallbacks(
+                main_provider,
+                fallback_providers,
+                retry_config,
+            ))
+        };
 
     // 创建 Memory（Arc 共享给 Agent 和 CLI）
     let data_dir = data_dir()?;
