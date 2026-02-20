@@ -153,6 +153,7 @@ mod tests {
                 .collect(),
             workspace_dir: canonical,
             blocked_paths: vec![],
+            http_allowed_hosts: vec![],
         }
     }
 

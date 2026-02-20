@@ -15,6 +15,8 @@ pub struct SecurityPolicy {
     pub allowed_commands: Vec<String>,
     pub workspace_dir: PathBuf,
     pub blocked_paths: Vec<PathBuf>,
+    /// HTTP 请求白名单，允许访问的 host/IP（仅在 Full 模式下生效）
+    pub http_allowed_hosts: Vec<String>,
 }
 
 impl Default for SecurityPolicy {
@@ -38,6 +40,7 @@ impl Default for SecurityPolicy {
                 PathBuf::from("/tmp"),
                 PathBuf::from("/root"),
             ],
+            http_allowed_hosts: vec![],
         }
     }
 }
@@ -104,6 +107,17 @@ impl SecurityPolicy {
     pub fn allows_execution(&self) -> bool {
         self.autonomy != AutonomyLevel::ReadOnly
     }
+
+    /// 检查 host 是否在 HTTP 白名单中
+    /// 白名单可以是精确的 IP 地址或域名
+    pub fn is_http_host_allowed(&self, host: &str) -> bool {
+        let host_lower = host.to_lowercase();
+        self.http_allowed_hosts.iter().any(|allowed| {
+            let allowed_lower = allowed.to_lowercase();
+            // 精确匹配或后缀匹配（例如 "example.com" 匹配 "api.example.com"）
+            allowed_lower == host_lower || host_lower.ends_with(&format!(".{}", allowed_lower))
+        })
+    }
 }
 
 /// 手动规范化路径（处理 `.` 和 `..`，不访问文件系统）
@@ -166,6 +180,7 @@ mod tests {
                 .collect(),
             workspace_dir: workspace.to_path_buf(),
             blocked_paths: vec![PathBuf::from("/etc"), PathBuf::from("/root")],
+            http_allowed_hosts: vec![],
         }
     }
 

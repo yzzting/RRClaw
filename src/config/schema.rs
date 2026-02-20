@@ -63,6 +63,9 @@ pub struct SecurityConfig {
     pub autonomy: AutonomyLevel,
     pub allowed_commands: Vec<String>,
     pub workspace_only: bool,
+    /// HTTP 请求白名单，允许访问的 host/IP
+    #[serde(default)]
+    pub http_allowed_hosts: Vec<String>,
 }
 
 /// 可靠性配置
@@ -164,6 +167,7 @@ impl Default for SecurityConfig {
             .map(String::from)
             .collect(),
             workspace_only: true,
+            http_allowed_hosts: vec![],
         }
     }
 }
@@ -208,6 +212,43 @@ impl Config {
         let base_dirs = directories::BaseDirs::new()
             .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
         Ok(base_dirs.home_dir().join(".rrclaw").join("config.toml"))
+    }
+
+    /// 从配置文件读取 http_allowed_hosts（实时读取，无需重启）
+    /// 从配置文件读取 http_allowed_hosts（实时读取，无需重启）
+    pub fn get_http_allowed_hosts() -> Vec<String> {
+        #[cfg(test)]
+        {
+            return vec![];
+        }
+        #[cfg(not(test))]
+        {
+            let config_path = match Self::config_path() {
+                Ok(p) => p,
+                Err(_) => return vec![],
+            };
+            let content = match std::fs::read_to_string(&config_path) {
+                Ok(c) => c,
+                Err(_) => return vec![],
+            };
+            let doc = match content.parse::<toml_edit::DocumentMut>() {
+                Ok(d) => d,
+                Err(_) => return vec![],
+            };
+
+            // 从 [security] 段读取 http_allowed_hosts
+            if let Some(security) = doc.get("security") {
+                if let Some(http_hosts) = security.get("http_allowed_hosts") {
+                    if let Some(arr) = http_hosts.as_array() {
+                        return arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                    }
+                }
+            }
+            vec![]
+        }
     }
 
     /// 加载配置，如果配置文件不存在则创建默认配置

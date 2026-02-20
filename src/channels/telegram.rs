@@ -80,6 +80,7 @@ impl AgentFactory {
             workspace_dir: std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from(".")),
             blocked_paths: SecurityPolicy::default().blocked_paths,
+            http_allowed_hosts: self.config.security.http_allowed_hosts.clone(),
         };
 
         Ok(Agent::new(

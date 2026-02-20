@@ -194,6 +194,7 @@ mod tests {
             allowed_commands: vec![],
             workspace_dir: canonical,
             blocked_paths: vec![],
+            http_allowed_hosts: vec![],
         }
     }
 

@@ -257,68 +257,110 @@ fn navigate_toml<'a>(doc: &'a toml_edit::DocumentMut, parts: &[&str]) -> Option<
     Some(current)
 }
 
+/// 解析数组字符串为 toml_edit::Array
+fn parse_array(value: &str) -> Option<toml_edit::Array> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+
+    let inner = &trimmed[1..trimmed.len() - 1].trim();
+    if inner.is_empty() {
+        return Some(toml_edit::Array::new());
+    }
+
+    let mut arr = toml_edit::Array::new();
+    for item in inner.split(',') {
+        let item = item.trim().trim_matches('"').trim_matches('\'');
+        arr.push(item);
+    }
+    Some(arr)
+}
+
 /// 在 TOML 文档中按路径设置值
 fn set_toml_value(doc: &mut toml_edit::DocumentMut, parts: &[&str], value: &str) -> bool {
     if parts.is_empty() {
         return false;
     }
 
-    // 先用只读方式验证路径存在
-    {
-        let mut check: &toml_edit::Item = doc.as_item();
-        for part in parts {
-            match check.get(part) {
-                Some(item) => check = item,
-                None => return false,
-            }
+    // 尝试解析为数组（支持 http_allowed_hosts = ["localhost"]）
+    let parsed_array = parse_array(value);
+
+    // 如果只有一个部分，直接设置根级键
+    if parts.len() == 1 {
+        let key = parts[0];
+        if let Some(arr) = &parsed_array {
+            doc[key] = arr.clone().into();
+            return true;
         }
+        doc[key] = toml_edit::value(value);
+        return true;
     }
 
-    // 导航到倒数第二层
-    let mut current: &mut toml_edit::Item = doc.as_item_mut();
-    for part in &parts[..parts.len() - 1] {
+    // 多层路径：导航到目标父节点
+    let table = doc.as_table_mut();
+
+    // 逐层导航，创建不存在的路径
+    let mut current = table;
+    for part in parts[..parts.len() - 1].iter() {
+        if !current.contains_key(part) {
+            current.insert(part, toml_edit::Table::new().into());
+        }
+
         match current.get_mut(part) {
-            Some(item) => current = item,
-            None => return false,
+            Some(item) if item.is_table_like() => {
+                current = item.as_table_mut().expect("should be table");
+            }
+            _ => return false,
         }
     }
 
     let last_key = parts[parts.len() - 1];
 
-    // 检查目标是否存在，根据原值类型决定新值类型
-    let existing = current.get(last_key);
-    let new_value = match existing {
-        Some(item) if item.is_bool() => {
-            match value.to_lowercase().as_str() {
-                "true" => toml_edit::value(true),
-                "false" => toml_edit::value(false),
-                _ => toml_edit::value(value),
-            }
-        }
-        Some(item) if item.is_float() => {
-            if let Ok(f) = value.parse::<f64>() {
-                toml_edit::value(f)
-            } else {
-                toml_edit::value(value)
-            }
-        }
-        Some(item) if item.is_integer() => {
-            if let Ok(i) = value.parse::<i64>() {
-                toml_edit::value(i)
-            } else {
-                toml_edit::value(value)
-            }
-        }
-        _ => toml_edit::value(value),
-    };
-
-    match current.get_mut(last_key) {
-        Some(item) => {
-            *item = new_value;
-            true
-        }
-        None => false,
+    // 设置最终值
+    if let Some(arr) = parsed_array {
+        current.insert(last_key, arr.into());
+        return true;
     }
+
+    // 根据现有值类型决定新值类型
+    if let Some(existing) = current.get(last_key) {
+        let new_val = match existing {
+            toml_edit::Item::None => toml_edit::value(value),
+            toml_edit::Item::Value(v) => match v {
+                toml_edit::Value::Boolean(_) => {
+                    if value == "true" {
+                        toml_edit::value(true)
+                    } else if value == "false" {
+                        toml_edit::value(false)
+                    } else {
+                        toml_edit::value(value)
+                    }
+                }
+                toml_edit::Value::Integer(_) => {
+                    if let Ok(i) = value.parse::<i64>() {
+                        toml_edit::value(i)
+                    } else {
+                        toml_edit::value(value)
+                    }
+                }
+                toml_edit::Value::Float(_) => {
+                    if let Ok(f) = value.parse::<f64>() {
+                        toml_edit::value(f)
+                    } else {
+                        toml_edit::value(value)
+                    }
+                }
+                _ => toml_edit::value(value),
+            },
+            _ => toml_edit::value(value),
+        };
+        current.insert(last_key, new_val);
+    } else {
+        current.insert(last_key, toml_edit::value(value));
+    }
+
+    true
 }
 
 /// 对配置内容中的 API Key 进行脱敏
@@ -457,12 +499,30 @@ temperature = 0.7
     }
 
     #[test]
-    fn set_toml_value_nonexistent_key_fails() {
+    fn set_toml_value_creates_new_key() {
         let content = r#"[default]
 model = "test"
 "#;
         let mut doc = content.parse::<toml_edit::DocumentMut>().unwrap();
-        assert!(!set_toml_value(&mut doc, &["nonexistent", "key"], "value"));
+        // 现在支持创建新键
+        assert!(set_toml_value(&mut doc, &["nonexistent", "key"], "value"));
+        // 验证新键已创建
+        assert_eq!(doc["nonexistent"]["key"].as_str(), Some("value"));
+    }
+
+    #[test]
+    fn set_toml_value_creates_array() {
+        let content = r#"[default]
+model = "test"
+"#;
+        let mut doc = content.parse::<toml_edit::DocumentMut>().unwrap();
+        // 测试创建数组
+        assert!(set_toml_value(&mut doc, &["security", "http_allowed_hosts"], r#"["localhost", "192.168.1.1"]"#));
+        // 验证数组已创建
+        let arr = doc["security"]["http_allowed_hosts"].as_array();
+        assert!(arr.is_some());
+        let arr = arr.unwrap();
+        assert_eq!(arr.len(), 2);
     }
 
     #[test]

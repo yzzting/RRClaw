@@ -822,7 +822,8 @@ impl Agent {
             "   - 第 2 次失败: 向用户说明情况，询问建议\n",
             "   - 不要同一个目标尝试超过 3 次\n",
             "5. 用中文回复，除非用户使用其他语言\n",
-            "6. 善用记忆: 当用户告知偏好或重要信息时，用 memory_store 保存；不确定之前是否讨论过时，用 memory_recall 检索",
+            "6. 善用记忆: 当用户告知偏好或重要信息时，用 memory_store 保存；不确定之前是否讨论过时，用 memory_recall 检索\n",
+            "7. HTTP 请求被 SSRF 防护阻止时: 向用户说明情况，询问是否要将该地址加入白名单。用户同意后，用 config 工具添加（如 /config set security.http_allowed_hosts 添加 [\"localhost\"]），然后重新尝试请求",
         ).to_string());
 
         parts.join("\n\n")
@@ -1138,6 +1139,7 @@ mod tests {
             allowed_commands: vec!["ls".to_string()],
             workspace_dir: PathBuf::from("/tmp"),
             blocked_paths: vec![],
+            http_allowed_hosts: vec![],
         }
     }
 
@@ -1344,9 +1346,10 @@ mod tests {
         // 精简后应明显短于旧版（旧版约 800+ 字符）
         // 精简后约 735 字符（旧版含白名单+工具格式+行为准则约 1200+ 字符）
         // 注：P4-memory-tools 添加了"善用记忆"原则后约 881 字符
+        // 注：P5-http-tool 添加了"HTTP SSRF 防护"原则后约 1129 字符
         assert!(
-            prompt.len() < 900,
-            "system prompt 应精简到 900 字符以内，实际 {} 字符",
+            prompt.len() < 1200,
+            "system prompt 应精简到 1200 字符以内，实际 {} 字符",
             prompt.len()
         );
     }

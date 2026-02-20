@@ -101,7 +101,11 @@ impl Tool for HttpRequestTool {
         };
 
         let host_str = host_ip.as_deref().unwrap_or("");
-        if let Some(reason) = check_ssrf_risk(host_str) {
+
+        // 实时读取配置文件中的 http_allowed_hosts（无需重启即生效）
+        let http_allowed_hosts = crate::config::Config::get_http_allowed_hosts();
+
+        if let Some(reason) = check_ssrf_risk(host_str, &http_allowed_hosts) {
             return Some(reason);
         }
 
@@ -298,14 +302,26 @@ impl Tool for HttpRequestTool {
 
 /// 检查 host 是否有 SSRF 风险
 /// 返回 Some(原因) 表示有风险，None 表示安全
-fn check_ssrf_risk(host: &str) -> Option<String> {
+fn check_ssrf_risk(host: &str, http_allowed_hosts: &[String]) -> Option<String> {
+    // 先检查白名单
+    let host_lower = host.to_lowercase();
+    if http_allowed_hosts.iter().any(|allowed| {
+        let allowed_lower = allowed.to_lowercase();
+        allowed_lower == host_lower || host_lower.ends_with(&format!(".{}", allowed_lower))
+    }) {
+        return None;
+    }
+
     // 1. 阻止 localhost 变体
     let host_lower = host.to_lowercase();
     if host_lower == "localhost"
         || host_lower == "ip6-localhost"
         || host_lower == "ip6-loopback"
     {
-        return Some(format!("禁止访问 localhost（SSRF 防护）: {}", host));
+        return Some(format!(
+            "禁止访问 localhost（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
+            host, host
+        ));
     }
 
     // 2. 阻止云平台元数据接口（AWS/GCP/Azure）
@@ -316,15 +332,18 @@ fn check_ssrf_risk(host: &str) -> Option<String> {
         || host_lower.ends_with(".local")
         || host_lower.ends_with(".localhost")
     {
-        return Some(format!("禁止访问元数据/内网服务（SSRF 防护）: {}", host));
+        return Some(format!(
+            "禁止访问元数据/内网服务（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
+            host, host
+        ));
     }
 
     // 3. 尝试解析为 IP 地址，检查是否为私有 IP
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_private_ip(ip) {
             return Some(format!(
-                "禁止访问私有/保留 IP 地址（SSRF 防护）: {}",
-                ip
+                "禁止访问私有/保留 IP 地址（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
+                ip, ip
             ));
         }
     }
@@ -382,6 +401,7 @@ mod tests {
             allowed_commands: vec![],
             workspace_dir: PathBuf::from("/tmp"),
             blocked_paths: vec![],
+            http_allowed_hosts: vec![],
         }
     }
 
