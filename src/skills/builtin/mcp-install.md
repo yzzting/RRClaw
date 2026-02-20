@@ -30,22 +30,22 @@ tags: [mcp, install, setup]
 
 **安装命令**：
 ```bash
-npx -y @org/package [args...]
+pnpm dlx @org/package [args...]
 ```
 
 **配置模板**：
 ```toml
 [mcp.servers.{name}]
 transport = "stdio"
-command = "npx"
-args = ["-y", "@org/package"]
+command = "pnpm"
+args = ["dlx", "@org/package"]
 env = {}
 allowed_tools = []
 ```
 
 **示例**：
 - 输入：`@modelcontextprotocol/server-filesystem /home/user/projects`
-- 命令：`npx -y @modelcontextprotocol/server-filesystem /home/user/projects`
+- 命令：`pnpm dlx @modelcontextprotocol/server-filesystem /home/user/projects`
 
 ---
 
@@ -56,9 +56,8 @@ allowed_tools = []
 **安装步骤**：
 1. 从 URL 提取 `org/repo` 格式
 2. 克隆仓库：`git clone https://github.com/{org}/{repo}.git /tmp/mcp-{name}`
-3. 进入目录：`cd /tmp/mcp-{name}`
-4. 执行 `npm install` 或 `npm run build`
-5. 找到入口文件：通常是 `dist/index.js`、`build/index.js` 或 package.json 的 `bin` 字段
+3. 进入目录后执行 `pnpm install` + `pnpm run build`
+4. 找到入口文件：通常是 `dist/index.js`、`build/index.js` 或 package.json 的 `bin` 字段
 
 **配置模板**：
 ```toml
@@ -92,7 +91,7 @@ headers = {}
 **安装步骤**：
 1. 检查路径是否存在
 2. 如果是目录，检查是否有 `package.json`
-3. 如有 `package.json`，执行 `npm install` + `npm run build`
+3. 如有 `package.json`，执行 `pnpm install` + `pnpm run build`
 4. 找到入口文件
 
 **配置模板**：
@@ -111,8 +110,8 @@ env = {}
 1. **解析输入**：判断用户提供的 MCP 类型
 2. **生成配置**：根据类型填充配置模板（{name} 替换为简短名称）
 3. **执行安装**：
-   - npm 包：直接使用
-   - GitHub：git clone + npm install
+   - npm 包：直接使用（pnpm dlx 无需预装）
+   - GitHub：git clone + pnpm install
    - 本地：检查并安装
    - SSE：无需安装
 4. **写入配置**：用 `config` 工具的 `append` 操作追加到 `~/.rrclaw/config.toml`
@@ -127,7 +126,7 @@ env = {}
 ```json
 {
   "action": "append",
-  "value": "[mcp.servers.{name}]\ntransport = \"stdio\"\ncommand = \"npx\"\nargs = [\"-y\", \"@org/package\"]"
+  "value": "[mcp.servers.{name}]\ntransport = \"stdio\"\ncommand = \"pnpm\"\nargs = [\"dlx\", \"@org/package\"]"
 }
 ```
 
@@ -135,8 +134,8 @@ env = {}
 ```toml
 [mcp.servers.{name}]
 transport = "stdio"
-command = "npx"
-args = ["-y", "@org/package"]
+command = "pnpm"
+args = ["dlx", "@org/package"]
 ```
 
 ---
@@ -145,11 +144,11 @@ args = ["-y", "@org/package"]
 
 | MCP Server | 安装命令 | 用途 |
 |------------|----------|------|
-| `@modelcontextprotocol/server-filesystem` | `npx -y @modelcontextprotocol/server-filesystem /path` | 文件系统 |
-| `@modelcontextprotocol/server-github` | `npx -y @modelcontextprotocol/server-github` | GitHub API |
-| `@modelcontextprotocol/server-postgres` | `npx -y @modelcontextprotocol/server-postgres "postgresql://..."` | PostgreSQL |
-| `@modelcontextprotocol/server-brave-search` | `npx -y @modelcontextprotocol/server-brave-search` | 网页搜索 |
-| `@modelcontextprotocol/server-slack` | `npx -y @modelcontextprotocol/server-slack` | Slack |
+| `@modelcontextprotocol/server-filesystem` | `pnpm dlx @modelcontextprotocol/server-filesystem /path` | 文件系统 |
+| `@modelcontextprotocol/server-github` | `pnpm dlx @modelcontextprotocol/server-github` | GitHub API |
+| `@modelcontextprotocol/server-postgres` | `pnpm dlx @modelcontextprotocol/server-postgres "postgresql://..."` | PostgreSQL |
+| `@modelcontextprotocol/server-brave-search` | `pnpm dlx @modelcontextprotocol/server-brave-search` | 网页搜索 |
+| `@modelcontextprotocol/server-slack` | `pnpm dlx @modelcontextprotocol/server-slack` | Slack |
 
 ---
 
