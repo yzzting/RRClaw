@@ -80,6 +80,7 @@ impl Tool for McpTool {
                             output_parts.push("[图片内容]".to_string());
                         }
                         RawContent::Resource(res) => {
+                            // RawEmbeddedResource.resource 是 ResourceContents
                             match &res.resource {
                                 ResourceContents::TextResourceContents { text, .. } => {
                                     output_parts.push(text.clone());
