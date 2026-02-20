@@ -142,7 +142,7 @@ async fn run_agent(
     );
 
     // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills，MemoryTools 需要 memory）
-    let tools = rrclaw::tools::create_tools(
+    let mut tools = rrclaw::tools::create_tools(
         config.clone(),
         data_dir.clone(),
         log_dir.clone(),
@@ -150,6 +150,23 @@ async fn run_agent(
         skills.clone(),
         memory.clone() as Arc<dyn rrclaw::memory::Memory>,
     );
+
+    // MCP 工具加载（可选，配置了才加载）
+    let mcp_manager = if let Some(mcp_config) = &config.mcp {
+        if !mcp_config.servers.is_empty() {
+            let mgr = rrclaw::mcp::McpManager::connect_all(&mcp_config.servers).await;
+            let mcp_tools = mgr.tools().await;
+            if !mcp_tools.is_empty() {
+                tracing::info!("已加载 {} 个 MCP 工具", mcp_tools.len());
+                tools.extend(mcp_tools);
+            }
+            Some(mgr)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // 种入核心知识（upsert，每次启动保持最新）
     memory
@@ -182,6 +199,11 @@ async fn run_agent(
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
         None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills).await?,
+    }
+
+    // 退出时关闭 MCP 连接
+    if let Some(mgr) = mcp_manager {
+        mgr.shutdown().await;
     }
 
     Ok(())
