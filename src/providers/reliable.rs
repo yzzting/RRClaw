@@ -76,8 +76,7 @@ impl Provider for ReliableProvider {
             model,
             temperature,
             &self.config,
-            false,
-            None,
+            &StreamMode::NonStream,
         )
         .await
         {
@@ -97,8 +96,7 @@ impl Provider for ReliableProvider {
                 model,
                 temperature,
                 &self.config,
-                false,
-                None,
+                &StreamMode::NonStream,
             )
             .await
             {
@@ -121,6 +119,8 @@ impl Provider for ReliableProvider {
         temperature: f64,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> Result<ChatResponse> {
+        let stream_mode = StreamMode::Stream(tx.clone());
+
         // 流式模式：先尝试主 Provider 重试
         match retry_with_backoff(
             &*self.inner,
@@ -129,8 +129,7 @@ impl Provider for ReliableProvider {
             model,
             temperature,
             &self.config,
-            true,
-            Some(tx.clone()),
+            &stream_mode,
         )
         .await
         {
@@ -148,8 +147,7 @@ impl Provider for ReliableProvider {
                 model,
                 temperature,
                 &self.config,
-                true,
-                Some(tx.clone()),
+                &stream_mode,
             )
             .await
             {
@@ -165,6 +163,12 @@ impl Provider for ReliableProvider {
     }
 }
 
+/// 流式模式选择：非流式 or 流式（带 sender）
+enum StreamMode {
+    NonStream,
+    Stream(tokio::sync::mpsc::Sender<StreamEvent>),
+}
+
 /// 对单个 Provider 执行重试逻辑（含指数退避）
 async fn retry_with_backoff(
     provider: &dyn Provider,
@@ -173,22 +177,20 @@ async fn retry_with_backoff(
     model: &str,
     temperature: f64,
     config: &RetryConfig,
-    is_stream: bool,
-    tx: Option<tokio::sync::mpsc::Sender<StreamEvent>>,
+    mode: &StreamMode,
 ) -> Result<ChatResponse> {
     let mut backoff_ms = config.initial_backoff_ms;
 
     for attempt in 0..=config.max_retries {
-        let result = if is_stream {
-            if let Some(tx) = &tx {
+        let result = match mode {
+            StreamMode::Stream(tx) => {
                 provider
                     .chat_stream(messages, tools, model, temperature, tx.clone())
                     .await
-            } else {
+            }
+            StreamMode::NonStream => {
                 provider.chat_with_tools(messages, tools, model, temperature).await
             }
-        } else {
-            provider.chat_with_tools(messages, tools, model, temperature).await
         };
 
         match result {
