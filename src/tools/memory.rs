@@ -61,6 +61,7 @@ impl Tool for MemoryStoreTool {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 key 参数".to_string()),
+                ..Default::default()
             }),
         };
 
@@ -70,6 +71,7 @@ impl Tool for MemoryStoreTool {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 content 参数".to_string()),
+                ..Default::default()
             }),
         };
 
@@ -84,11 +86,13 @@ impl Tool for MemoryStoreTool {
                 success: true,
                 output: format!("已记住: [{}] {}", key, truncate(content, 100)),
                 error: None,
+                ..Default::default()
             }),
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("存储失败: {}", e)),
+                ..Default::default()
             }),
         }
     }
@@ -144,6 +148,7 @@ impl Tool for MemoryRecallTool {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 query 参数".to_string()),
+                ..Default::default()
             }),
         };
 
@@ -159,6 +164,7 @@ impl Tool for MemoryRecallTool {
                         success: true,
                         output: format!("未找到与 '{}' 相关的记忆。", query),
                         error: None,
+                        ..Default::default()
                     });
                 }
 
@@ -178,12 +184,14 @@ impl Tool for MemoryRecallTool {
                     success: true,
                     output,
                     error: None,
+                    ..Default::default()
                 })
             }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("搜索失败: {}", e)),
+                ..Default::default()
             }),
         }
     }
@@ -233,6 +241,7 @@ impl Tool for MemoryForgetTool {
                 success: false,
                 output: String::new(),
                 error: Some("缺少 key 参数".to_string()),
+                ..Default::default()
             }),
         };
 
@@ -241,16 +250,19 @@ impl Tool for MemoryForgetTool {
                 success: true,
                 output: format!("已删除记忆: {}", key),
                 error: None,
+                ..Default::default()
             }),
             Ok(false) => Ok(ToolResult {
                 success: true,
                 output: format!("未找到记忆: {}（可能已被删除）", key),
                 error: None,
+                ..Default::default()
             }),
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("删除失败: {}", e)),
+                ..Default::default()
             }),
         }
     }

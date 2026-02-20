@@ -58,6 +58,7 @@ impl Tool for SkillTool {
                     success: false,
                     output: String::new(),
                     error: Some("缺少 name 参数".to_string()),
+                    ..Default::default()
                 });
             }
         };
@@ -78,12 +79,14 @@ impl Tool for SkillTool {
                     success: true,
                     output,
                     error: None,
+                    ..Default::default()
                 })
             }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(e.to_string()),
+                ..Default::default()
             }),
         }
     }

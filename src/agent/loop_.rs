@@ -1127,6 +1127,7 @@ mod tests {
                 success: true,
                 output: self.result.clone(),
                 error: None,
+                ..Default::default()
             })
         }
     }

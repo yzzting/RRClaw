@@ -68,6 +68,7 @@ impl Tool for ShellTool {
                 success: false,
                 output: String::new(),
                 error: Some("当前为只读模式，不允许执行命令".to_string()),
+                ..Default::default()
             });
         }
 
@@ -78,6 +79,7 @@ impl Tool for ShellTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("命令不在白名单中: {}", command)),
+                ..Default::default()
             });
         }
 
@@ -110,6 +112,7 @@ impl Tool for ShellTool {
                         success: true,
                         output: combined,
                         error: None,
+                        ..Default::default()
                     })
                 } else {
                     Ok(ToolResult {
@@ -120,6 +123,7 @@ impl Tool for ShellTool {
                             output.status.code().unwrap_or(-1),
                             stderr
                         )),
+                        ..Default::default()
                     })
                 }
             }
@@ -128,6 +132,7 @@ impl Tool for ShellTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("命令执行超时 ({}s)", SHELL_TIMEOUT.as_secs())),
+                ..Default::default()
             }),
         }
     }

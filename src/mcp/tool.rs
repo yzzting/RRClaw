@@ -100,12 +100,14 @@ impl Tool for McpTool {
                     success: !is_error,
                     output: if is_error { String::new() } else { output.clone() },
                     error: if is_error { Some(output) } else { None },
+                    ..Default::default()
                 })
             }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("MCP 调用失败: {}", e)),
+                ..Default::default()
             }),
         }
     }

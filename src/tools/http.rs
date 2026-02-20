@@ -138,6 +138,7 @@ impl Tool for HttpRequestTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!("不支持的 HTTP 方法: {}", method_str)),
+                    ..Default::default()
                 })
             }
         };
@@ -199,6 +200,7 @@ impl Tool for HttpRequestTool {
                     success: false,
                     output: String::new(),
                     error: Some(err_msg),
+                    ..Default::default()
                 });
             }
         };
@@ -289,6 +291,7 @@ impl Tool for HttpRequestTool {
             } else {
                 Some(output)
             },
+            ..Default::default()
         })
     }
 }
