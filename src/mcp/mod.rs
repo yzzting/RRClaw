@@ -110,16 +110,18 @@ async fn connect_server(
         McpTransport::Stdio { command, args, env } => {
             let env_clone = env.clone();
             let args_clone = args.clone();
-            let transport = TokioChildProcess::new(
+            // 用 builder().stderr(null) 抑制子进程日志，TokioChildProcess::new()
+            // 内部 builder 默认 stderr=inherit 会覆盖 configure 回调里的设置
+            let (transport, _) = TokioChildProcess::builder(
                 tokio::process::Command::new(command).configure(|cmd| {
                     cmd.args(&args_clone);
                     for (k, v) in &env_clone {
                         cmd.env(k, v);
                     }
-                    // 抑制子进程的 stderr，避免 MCP server 自身的日志污染终端
-                    cmd.stderr(std::process::Stdio::null());
                 }),
-            )?;
+            )
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
 
             ().serve(transport)
                 .await
