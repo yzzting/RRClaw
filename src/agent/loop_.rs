@@ -922,9 +922,9 @@ impl Agent {
         // 将 history 序列化为可读文本
         let transcript = format_history_for_summary(messages);
 
-        // 截断过长的 transcript（避免 token 超限）
+        // 截断过长的 transcript（避免 token 超限，用 truncate_str 保证 UTF-8 安全）
         let transcript_truncated = if transcript.len() > 12_000 {
-            format!("{}...[已截断]", &transcript[..12_000])
+            format!("{}...[已截断]", truncate_str(&transcript, 12_000))
         } else {
             transcript
         };
@@ -987,7 +987,7 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
                 }
                 let role_label = if cm.role == "user" { "用户" } else { "助手" };
                 let content = if cm.content.len() > 500 {
-                    format!("{}...", &cm.content[..500])
+                    truncate_str(&cm.content, 500)
                 } else {
                     cm.content.clone()
                 };
@@ -1004,7 +1004,7 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
             }
             ConversationMessage::ToolResult { content, .. } => {
                 let preview = if content.len() > 200 {
-                    format!("{}...", &content[..200])
+                    truncate_str(content, 200)
                 } else {
                     content.clone()
                 };
@@ -1166,7 +1166,13 @@ mod tests {
     #[tokio::test]
     async fn tool_call_then_text() {
         let provider = MockProvider::new(vec![
-            // First response: tool call
+            // Phase 1 routing response
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 first response: tool call
             ChatResponse {
                 text: Some("让我查看一下".to_string()),
                 reasoning_content: None,
@@ -1176,7 +1182,7 @@ mod tests {
                     arguments: serde_json::json!({"command": "ls"}),
                 }],
             },
-            // Second response: final text
+            // Phase 2 second response: final text
             ChatResponse {
                 text: Some("目录中有 file.txt".to_string()),
                 reasoning_content: None,
@@ -1208,6 +1214,13 @@ mod tests {
     #[tokio::test]
     async fn unknown_tool_handled() {
         let provider = MockProvider::new(vec![
+            // Phase 1 routing response
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 first response: unknown tool call
             ChatResponse {
                 text: None,
                 reasoning_content: None,
@@ -1217,6 +1230,7 @@ mod tests {
                     arguments: serde_json::json!({}),
                 }],
             },
+            // Phase 2 second response: final text
             ChatResponse {
                 text: Some("抱歉".to_string()),
                 reasoning_content: None,
@@ -1393,6 +1407,13 @@ mod tests {
     #[tokio::test]
     async fn supervised_confirm_allows_execution() {
         let provider = MockProvider::new(vec![
+            // Phase 1 routing response
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 first response: tool call
             ChatResponse {
                 text: None,
                 reasoning_content: None,
@@ -1402,6 +1423,7 @@ mod tests {
                     arguments: serde_json::json!({"command": "ls"}),
                 }],
             },
+            // Phase 2 second response: final text after tool execution
             ChatResponse {
                 text: Some("执行完成".to_string()),
                 reasoning_content: None,
@@ -1439,6 +1461,13 @@ mod tests {
     #[tokio::test]
     async fn supervised_confirm_denies_execution() {
         let provider = MockProvider::new(vec![
+            // Phase 1 routing response
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 first response: dangerous tool call
             ChatResponse {
                 text: None,
                 reasoning_content: None,
@@ -1448,6 +1477,7 @@ mod tests {
                     arguments: serde_json::json!({"command": "rm -rf /"}),
                 }],
             },
+            // Phase 2 second response: after tool was denied
             ChatResponse {
                 text: Some("好的，已取消".to_string()),
                 reasoning_content: None,
@@ -1485,6 +1515,13 @@ mod tests {
     #[tokio::test]
     async fn full_mode_skips_confirmation() {
         let provider = MockProvider::new(vec![
+            // Phase 1 routing response
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 first response: tool call
             ChatResponse {
                 text: None,
                 reasoning_content: None,
@@ -1494,6 +1531,7 @@ mod tests {
                     arguments: serde_json::json!({"command": "ls"}),
                 }],
             },
+            // Phase 2 second response: final text (no confirm prompt in Full mode)
             ChatResponse {
                 text: Some("完成".to_string()),
                 reasoning_content: None,
