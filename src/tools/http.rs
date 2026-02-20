@@ -167,7 +167,7 @@ impl Tool for HttpRequestTool {
             .map_err(|e| eyre!("构建 HTTP client 失败: {}", e))?;
 
         // 构建请求
-        let mut request_builder = client.request(method.clone(), url_str).headers(header_map);
+        let mut request_builder = client.request(method, url_str).headers(header_map);
 
         // 设置 body（只对有 body 的方法生效）
         if let Some(body_str) = args.get("body").and_then(|v| v.as_str()) {
@@ -242,9 +242,10 @@ impl Tool for HttpRequestTool {
         }
 
         // 尝试 UTF-8 解码，失败则显示字节数
-        let body_str = match String::from_utf8(body_bytes.clone()) {
+        let body_len = body_bytes.len();
+        let body_str = match String::from_utf8(body_bytes) {
             Ok(s) => s,
-            Err(_) => format!("<二进制响应，{} 字节>", body_bytes.len()),
+            Err(_) => format!("<二进制响应，{} 字节>", body_len),
         };
 
         // 格式化输出
@@ -273,7 +274,7 @@ impl Tool for HttpRequestTool {
         debug!(
             "http_request 完成: status={}, body_len={}, truncated={}",
             status.as_u16(),
-            body_bytes.len(),
+            body_len,
             truncated
         );
 
@@ -334,7 +335,7 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
             // 172.16.0.0/12 (RFC 1918)
             // 192.168.0.0/16 (RFC 1918)
             // 169.254.0.0/16 (link-local / 云元数据)
-            // 0.0.0.0/8 (unspecified)
+            // 0.0.0.0 (unspecified，仅精确匹配，非整个 /8 段)
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
