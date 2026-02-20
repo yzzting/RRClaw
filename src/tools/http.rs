@@ -29,6 +29,7 @@ impl Tool for HttpRequestTool {
         "发起 HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD）。\
          支持自定义 headers、请求体。\
          仅允许 http/https，禁止访问内网/localhost/云元数据接口（SSRF 防护）。\
+         不自动跟随重定向（3xx 响应会直接返回 Location header）。\
          响应体最大 1MB，超出部分截断。"
     }
 
@@ -161,8 +162,10 @@ impl Tool for HttpRequestTool {
         }
 
         // 构建 client（每次请求新建，避免连接复用带来的超时状态问题）
+        // 禁用自动重定向：重定向目标 URL 不会再次经过 SSRF 检查，存在绕过风险
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| eyre!("构建 HTTP client 失败: {}", e))?;
 
