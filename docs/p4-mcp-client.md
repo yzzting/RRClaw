@@ -611,3 +611,295 @@ fn mcp_tool_empty_schema_fallback() {
 6. **SSE headers 的 TOML 格式**：TOML 内联表语法 `headers = { Authorization = "Bearer x" }` 会被 figment 正确解析为 `HashMap<String, String>`。
 
 7. **测试不启动真实 MCP Server**：单元测试只测 config 解析和 McpTool 名称逻辑。集成测试（需要真实 npx）建议在 CI 中单独运行，用 `#[ignore]` 标记。
+
+---
+
+## 十、MCP 安装 Skill（LLM 决策安装）
+
+核心实现：创建一个 `mcp-install` skill，包含完整的安装指南，让 LLM 能够根据用户输入自动判断安装方式。
+
+---
+
+## 十一、MCP 安装与添加方式
+
+### MCP Server 安装原理
+
+MCP Server 本质是一个 npm 包，通过 `npx` 命令启动。例如：
+
+```bash
+# 文件系统 MCP
+npx -y @modelcontextprotocol/server-filesystem /home/user/projects
+
+# GitHub MCP
+npx -y @modelcontextprotocol/server-github
+
+# PostgreSQL MCP
+npx -y @modelcontextprotocol/server-postgres "postgresql://localhost/mydb"
+```
+
+RRClaw 通过 stdio 传输启动这些进程，与之通信。
+
+### 添加方式
+
+#### 方式一：直接编辑 config.toml
+
+手动编辑 `~/.rrclaw/config.toml`：
+
+```toml
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
+
+[mcp.servers.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_xxx" }
+```
+
+#### 方式二：LLM + Skill 安装（推荐）
+
+用户给 LLM 一个输入，LLM 自动判断类型并安装：
+
+```
+用户：帮我安装 @modelcontextprotocol/server-github
+用户：帮我安装 https://github.com/vercel-labs/agent-skills
+用户：帮我安装 https://mcp.example.com/sse
+```
+
+**前提**：创建 `mcp-install` skill，包含完整的安装指南。
+
+##### 10.3.1 mcp-install Skill 设计
+
+```markdown
+---
+name: mcp-install
+description: MCP Server 安装助手。当用户要求安装、添加、配置 MCP 时使用此技能。
+---
+
+# MCP 安装指南
+
+根据用户输入的 MCP 地址或包名，判断类型并执行对应安装步骤。
+
+## 判断逻辑
+
+根据输入格式判断 MCP 类型：
+
+| 输入格式 | 类型 | 示例 |
+|----------|------|------|
+| `@org/package` | npm 包 | `@modelcontextprotocol/server-filesystem` |
+| `org/package` | npm 包（简写） | `server-github` |
+| `https://github.com/xxx` | GitHub 仓库 | `https://github.com/vercel-labs/agent-skills` |
+| `https://xxx/sse` | SSE URL | `https://mcp.example.com/sse` |
+| `/path/to/xxx` | 本地路径 | `/Users/me/my-mcp-server` |
+
+---
+
+## 安装步骤
+
+### 类型 1：npm 包
+
+**判断依据**：输入以 `@` 开头，或包含 `/` 但不是 URL
+
+**安装命令**：
+```bash
+npx -y @org/package [args...]
+```
+
+**配置模板**：
+```toml
+[mcp.servers.{name}]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@org/package"]
+env = {}  # 可选，如需要环境变量
+allowed_tools = []  # 可选，空=全部
+```
+
+**示例**：
+- 输入：`@modelcontextprotocol/server-filesystem /home/user/projects`
+- 命令：`npx -y @modelcontextprotocol/server-filesystem /home/user/projects`
+- 配置：
+```toml
+[mcp.servers.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
+```
+
+### 类型 2：GitHub 仓库
+
+**判断依据**：输入以 `https://github.com/` 开头
+
+**安装步骤**：
+1. 从 URL 提取 `org/repo` 格式
+2. 克隆仓库：`git clone https://github.com/{org}/{repo}.git /tmp/mcp-{name}`
+3. 进入目录：`cd /tmp/mcp-{name}`
+4. 检查 package.json：如存在，执行 `npm install` 或 `npm run build`
+5. 找到入口文件：通常是 `dist/index.js`、`build/index.js` 或 package.json 的 `bin` 字段
+
+**安装命令**：
+```bash
+git clone https://github.com/{org}/{repo}.git /tmp/mcp-{name}
+cd /tmp/mcp-{name}
+npm install  # 或 npm run build
+```
+
+**配置模板**：
+```toml
+[mcp.servers.{name}]
+transport = "stdio"
+command = "node"
+args = ["/tmp/mcp-{name}/dist/index.js"]
+env = {}  # 可选
+```
+
+**示例**：
+- 输入：`https://github.com/vercel-labs/agent-skills`
+- 克隆：`git clone https://github.com/vercel-labs/agent-skills.git /tmp/mcp-agent-skills`
+- 构建：`cd /tmp/mcp-agent-skills && npm install && npm run build`
+- 假设入口：`/tmp/mcp-agent-skills/dist/index.js`
+- 配置：
+```toml
+[mcp.servers.agent-skills]
+transport = "stdio"
+command = "node"
+args = ["/tmp/mcp-agent-skills/dist/index.js"]
+```
+
+### 类型 3：SSE URL
+
+**判断依据**：输入以 `https://` 开头，且包含 `/sse` 或以 `/` 结尾但不是 GitHub
+
+**配置模板**：
+```toml
+[mcp.servers.{name}]
+transport = "sse"
+url = "https://xxx/sse"
+headers = {}  # 可选，如 Authorization
+```
+
+**示例**：
+- 输入：`https://mcp.example.com/sse`
+- 配置：
+```toml
+[mcp.servers.remote]
+transport = "sse"
+url = "https://mcp.example.com/sse"
+```
+
+### 类型 4：本地路径
+
+**判断依据**：输入以 `/` 开头（绝对路径）
+
+**安装步骤**：
+1. 检查路径是否存在
+2. 如果是目录，检查是否有 `package.json`
+3. 如有 `package.json`，执行 `npm install` + `npm run build`
+4. 找到入口文件
+
+**配置模板**：
+```toml
+[mcp.servers.{name}]
+transport = "stdio"
+command = "node"
+args = ["/path/to/entry.js"]
+env = {}
+```
+
+**示例**：
+- 输入：`/Users/me/my-mcp-server`
+- 假设入口：`/Users/me/my-mcp-server/dist/index.js`
+- 配置：
+```toml
+[mcp.servers.my-mcp]
+transport = "stdio"
+command = "node"
+args = ["/Users/me/my-mcp-server/dist/index.js"]
+```
+
+---
+
+## 完整安装流程
+
+1. **解析输入**：判断用户提供的 MCP 类型
+2. **生成配置**：根据类型填充配置模板（{name} 替换为简短名称）
+3. **执行安装**：
+   - npm 包：直接使用
+   - GitHub：git clone + npm install
+   - 本地：检查并安装
+   - SSE：无需安装
+4. **写入配置**：调用 config 工具将配置写入 `~/.rrclaw/config.toml`
+5. **加载 MCP**：通知用户需要重启或使用 `/mcp reload`（如已实现）
+
+---
+
+## config 工具调用示例
+
+```python
+# 读取当前配置
+config.get("mcp")
+
+# 追加新 server 配置（需要手动编辑或使用 toml_edit）
+# 建议直接用 shell 工具追加：
+# echo '[mcp.servers.xxx]\ntransport = "stdio"...' >> ~/.rrclaw/config.toml
+
+# 或使用 sed/awk 插入
+```
+
+---
+
+## 常见 MCP Server 推荐
+
+| MCP Server | 安装命令 | 用途 |
+|------------|----------|------|
+| `@modelcontextprotocol/server-filesystem` | `npx -y @modelcontextprotocol/server-filesystem /path` | 文件系统访问 |
+| `@modelcontextprotocol/server-github` | `npx -y @modelcontextprotocol/server-github` | GitHub API |
+| `@modelcontextprotocol/server-postgres` | `npx -y @modelcontextprotocol/server-postgres "postgresql://..."` | PostgreSQL |
+| `@modelcontextprotocol/server-brave-search` | `npx -y @modelcontextprotocol/server-brave-search` | 网页搜索 |
+| `@modelcontextprotocol/server-slack` | `npx -y @modelcontextprotocol/server-slack` | Slack |
+```
+
+##### 10.3.2 CLI 集成
+
+在 `src/channels/cli.rs` 中添加 `/mcp` 命令，列出当前已加载的 MCP servers：
+
+```rust
+// /mcp — 列出已加载的 MCP servers
+async fn handle_mcp_command(&mut self, _args: Vec<String>) -> Result<()> {
+    println!("已加载的 MCP Servers:");
+    for (name, _server) in &self.mcp_servers {
+        println!("  - {}", name);
+    }
+    Ok(())
+}
+```
+
+如需完整管理功能（add/remove），可后续扩展。
+
+---
+
+## 十二、待实现功能清单
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| config.toml 加载 MCP | ✅ 已完成 | 启动时加载 |
+| mcp-install Skill | ⬜ 待实现 | LLM 安装指南 |
+| `/mcp` CLI 命令 | ⬜ 可选 | 列出已加载的 MCP |
+
+**实现方式**：
+
+1. **创建 mcp-install Skill**：在 `~/.rrclaw/skills/` 或内置 skill 目录创建 `mcp-install.md`，包含完整的安装指南
+2. **无需新增代码**：利用现有 shell + config 工具 + skill 系统即可完成
+
+**用户流程**：
+```
+用户：帮我安装 @modelcontextprotocol/server-github
+LLM：（加载 mcp-install skill）分析输入类型为 npm 包，生成安装命令
+LLM：需要执行以下命令来安装 GitHub MCP：
+      npx -y @modelcontextprotocol/server-github
+     [等待用户确认]
+用户确认
+LLM：执行安装 → 写入 config.toml → 提示需要重启
+```
