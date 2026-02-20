@@ -1,4 +1,5 @@
 use color_eyre::eyre::{Context, Result, eyre};
+use dialoguer::{Confirm, Input, Select};
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
@@ -442,49 +443,334 @@ fn cmd_identity_status(data_dir: &std::path::Path, workspace_dir: std::path::Pat
     Ok(())
 }
 
-/// /identity edit <type> 实现
+/// /identity edit <type> — 引导式问答入口
 fn cmd_identity_edit(file_type: Option<&str>, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
     let file_type = file_type.ok_or_else(|| eyre!("用法: /identity edit <user|soul|agent>"))?;
+    match file_type {
+        "user"  => guided_edit_user(data_dir),
+        "soul"  => guided_edit_soul(data_dir, &workspace_dir),
+        "agent" => guided_edit_agent(&workspace_dir),
+        other   => Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+    }
+}
 
-    let (path, template) = match file_type {
-        "user" => (
-            data_dir.join("USER.md"),
-            TEMPLATE_USER,
-        ),
-        "soul" => {
-            // 优先打开项目级，不存在时打开全局
-            let project_path = workspace_dir.join(".rrclaw/SOUL.md");
-            let global_path = data_dir.join("SOUL.md");
-            let path = if project_path.exists() { project_path } else { global_path };
-            (path, TEMPLATE_SOUL)
+// ─── 引导式编辑辅助函数 ───────────────────────────────────────────────────
+
+/// 从文件内容中提取 `- {prefix}：{value}` 格式的单行字段值
+fn extract_field(content: &str, prefix: &str) -> String {
+    let needle = format!("- {}：", prefix);
+    for line in content.lines() {
+        if let Some(rest) = line.trim().strip_prefix(&needle) {
+            return rest.trim().to_string();
         }
-        "agent" => (
-            workspace_dir.join(".rrclaw/AGENT.md"),
-            TEMPLATE_AGENT,
-        ),
-        other => return Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+    }
+    String::new()
+}
+
+/// 提取指定 `## 节名` 下所有 `- item` 条目（遇到下一个 `##` 停止）
+fn extract_section_items(content: &str, section_header: &str) -> Vec<String> {
+    let header = format!("## {}", section_header);
+    let mut in_section = false;
+    let mut items = Vec::new();
+    for line in content.lines() {
+        if line.trim() == header {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            if line.starts_with("## ") {
+                break;
+            }
+            if let Some(item) = line.trim().strip_prefix("- ") {
+                let item = item.trim().to_string();
+                if !item.is_empty() {
+                    items.push(item);
+                }
+            }
+        }
+    }
+    items
+}
+
+/// 显示现有条目，询问保留与否，然后循环追问新条目
+/// `prompt_first`：空列表时首条提示，`prompt_more`：后续条提示
+fn collect_list_items(prompt_first: &str, prompt_more: &str, existing: Vec<String>) -> Result<Vec<String>> {
+    let mut items: Vec<String> = if !existing.is_empty() {
+        println!("  当前已有 {} 条：", existing.len());
+        for (i, item) in existing.iter().enumerate() {
+            println!("    {}. {}", i + 1, item);
+        }
+        let keep = Confirm::new()
+            .with_prompt("保留这些条目")
+            .default(true)
+            .interact()
+            .wrap_err("确认输入失败")?;
+        if keep { existing } else { vec![] }
+    } else {
+        vec![]
     };
 
-    // 文件不存在时创建目录和模板
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .wrap_err_with(|| format!("创建目录失败: {}", parent.display()))?;
+    loop {
+        let prompt = if items.is_empty() { prompt_first } else { prompt_more };
+        let item: String = Input::new()
+            .with_prompt(prompt)
+            .allow_empty(true)
+            .interact_text()
+            .wrap_err("输入失败")?;
+        let item = item.trim().to_string();
+        if item.is_empty() {
+            break;
         }
-        std::fs::write(&path, template)
-            .wrap_err_with(|| format!("写入模板失败: {}", path.display()))?;
-        println!("✓ 已创建模板: {}", path.display());
+        items.push(item);
+    }
+    Ok(items)
+}
+
+/// 写入文件（自动创建父目录）
+fn write_identity_file(path: &std::path::Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("创建目录失败: {}", parent.display()))?;
+    }
+    std::fs::write(path, content)
+        .wrap_err_with(|| format!("写入文件失败: {}", path.display()))?;
+    println!("\n✓ 已保存: {}", path.display());
+    println!("  使用 /identity reload 立即生效。");
+    Ok(())
+}
+
+// ─── USER.md 引导式编辑 ───────────────────────────────────────────────────
+
+fn guided_edit_user(data_dir: &std::path::Path) -> Result<()> {
+    let path = data_dir.join("USER.md");
+
+    // 读取现有内容用于预填充
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    println!("\n─── 全局用户偏好设置 (USER.md) ───────────────────────────\n");
+    println!("  所有项目的 AI 对话都会读取此文件，用于告知 AI 你的背景和偏好。\n");
+
+    let tech_stack: String = Input::new()
+        .with_prompt("主要技术栈（如：Rust, Python）")
+        .default(extract_field(&existing, "主要技术栈"))
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    let work_lang: String = Input::new()
+        .with_prompt("工作语言偏好（如：中文）")
+        .default({
+            let v = extract_field(&existing, "工作语言");
+            if v.is_empty() { "中文".to_string() } else { v }
+        })
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    let reply_style: String = Input::new()
+        .with_prompt("回复风格（如：简洁直接、先结论后解释）")
+        .default(extract_field(&existing, "回复风格"))
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    let timezone: String = Input::new()
+        .with_prompt("时区（如：Asia/Shanghai，留空跳过）")
+        .default(extract_field(&existing, "时区"))
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    println!("\n  额外约定（留空结束追加）：");
+    let extras = collect_list_items(
+        "添加约定（留空跳过）",
+        "再加一条（留空完成）",
+        extract_section_items(&existing, "偏好约定"),
+    )?;
+
+    // 构建输出
+    let mut content = String::from("## 用户信息\n\n");
+    if !tech_stack.trim().is_empty() {
+        content.push_str(&format!("- 主要技术栈：{}\n", tech_stack.trim()));
+    }
+    content.push_str(&format!("- 工作语言：{}\n", work_lang.trim()));
+    if !reply_style.trim().is_empty() {
+        content.push_str(&format!("- 回复风格：{}\n", reply_style.trim()));
+    }
+    if !timezone.trim().is_empty() {
+        content.push_str(&format!("- 时区：{}\n", timezone.trim()));
+    }
+    if !extras.is_empty() {
+        content.push_str("\n## 偏好约定\n\n");
+        for item in &extras {
+            content.push_str(&format!("- {}\n", item));
+        }
+    }
+    content.push('\n');
+
+    write_identity_file(&path, &content)
+}
+
+// ─── SOUL.md 引导式编辑 ───────────────────────────────────────────────────
+
+fn guided_edit_soul(data_dir: &std::path::Path, workspace_dir: &std::path::Path) -> Result<()> {
+    // 先让用户选范围
+    let global_path = data_dir.join("SOUL.md");
+    let project_path = workspace_dir.join(".rrclaw/SOUL.md");
+
+    let scope_labels = [
+        format!("全局 ({}) — 所有项目共享", global_path.display()),
+        format!("项目级 ({}) — 仅本项目", project_path.display()),
+    ];
+    let scope_idx = Select::new()
+        .with_prompt("编辑哪个级别的 SOUL.md")
+        .items(&scope_labels)
+        .default(0)
+        .interact()
+        .wrap_err("选择失败")?;
+    let path = if scope_idx == 0 { &global_path } else { &project_path };
+
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+
+    println!("\n─── Agent 人格设置 (SOUL.md) ──────────────────────────────\n");
+    println!("  告知 AI 它的角色定位和说话风格，留空字段将被忽略。\n");
+
+    // 从 "你叫 {name}。" 提取名字
+    let existing_name = existing
+        .lines()
+        .find_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("你叫 ")
+                .and_then(|rest| rest.strip_suffix('。'))
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+
+    let name: String = Input::new()
+        .with_prompt("Agent 名字（如：Claw，留空使用默认 RRClaw）")
+        .default(existing_name)
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    let style: String = Input::new()
+        .with_prompt("说话风格（如：直接简洁，不废话）")
+        .default(extract_field(&existing, "说话风格"))
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    let forbidden: String = Input::new()
+        .with_prompt("禁止开头语（如：当然！好的！，留空跳过）")
+        .default({
+            // 从 `- 不说"..."等废话开头` 提取
+            existing.lines()
+                .find_map(|line| {
+                    let line = line.trim();
+                    if line.starts_with("- 不说\"") || line.starts_with("- 不用\"") {
+                        let start = line.find('"').map(|i| i + 1)?;
+                        let end = line.rfind('"')?;
+                        Some(line[start..end].to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        })
+        .allow_empty(true)
+        .interact_text()
+        .wrap_err("输入失败")?;
+
+    // 其余 `- ` 行作为已有 traits（排除已处理的字段行）
+    let existing_traits: Vec<String> = existing.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.starts_with("- ") { return None; }
+            let item = &line[2..];
+            if item.starts_with("说话风格：") { return None; }
+            if item.starts_with("不说\"") || item.starts_with("不用\"") { return None; }
+            Some(item.to_string())
+        })
+        .collect();
+
+    println!("\n  额外个性特征（留空结束追加）：");
+    let traits = collect_list_items(
+        "添加特征（留空跳过）",
+        "再加一条（留空完成）",
+        existing_traits,
+    )?;
+
+    // 构建输出
+    let mut content = String::new();
+    if name.trim().is_empty() {
+        content.push_str("你是 RRClaw，一个 AI 助手。\n");
+    } else {
+        content.push_str(&format!("你叫 {}。\n", name.trim()));
+    }
+    content.push('\n');
+    if !style.trim().is_empty() {
+        content.push_str(&format!("- 说话风格：{}\n", style.trim()));
+    }
+    if !forbidden.trim().is_empty() {
+        content.push_str(&format!("- 不说\"{}\"等废话开头\n", forbidden.trim()));
+    }
+    for t in &traits {
+        content.push_str(&format!("- {}\n", t));
+    }
+    content.push('\n');
+
+    write_identity_file(path, &content)
+}
+
+// ─── AGENT.md 引导式编辑 ─────────────────────────────────────────────────
+
+fn guided_edit_agent(workspace_dir: &std::path::Path) -> Result<()> {
+    let path = workspace_dir.join(".rrclaw/AGENT.md");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    println!("\n─── 项目行为约定设置 (AGENT.md) ───────────────────────────\n");
+    println!("  仅对本项目生效，告知 AI 项目的代码规范、提交约定和禁止事项。\n");
+
+    println!("  【代码规范】");
+    let code_standards = collect_list_items(
+        "添加代码规范（如：必须通过 clippy，留空跳过）",
+        "再加一条（留空完成）",
+        extract_section_items(&existing, "代码规范"),
+    )?;
+
+    println!("\n  【Git 提交规范】");
+    let git_conventions = collect_list_items(
+        "添加提交规范（如：feat/fix/docs 前缀，留空跳过）",
+        "再加一条（留空完成）",
+        extract_section_items(&existing, "Git 提交规范"),
+    )?;
+
+    println!("\n  【禁止事项】");
+    let forbidden_items = collect_list_items(
+        "添加禁止事项（如：禁止 unwrap()，留空跳过）",
+        "再加一条（留空完成）",
+        extract_section_items(&existing, "禁止事项"),
+    )?;
+
+    // 构建输出（空节省略）
+    let mut content = String::new();
+    let mut write_section = |header: &str, items: &[String]| {
+        if items.is_empty() { return; }
+        content.push_str(&format!("## {}\n\n", header));
+        for item in items {
+            content.push_str(&format!("- {}\n", item));
+        }
+        content.push('\n');
+    };
+    write_section("代码规范", &code_standards);
+    write_section("Git 提交规范", &git_conventions);
+    write_section("禁止事项", &forbidden_items);
+
+    if content.trim().is_empty() {
+        println!("\n  未输入任何内容，文件未修改。");
+        return Ok(());
     }
 
-    // 用 $EDITOR 打开
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    std::process::Command::new(&editor)
-        .arg(&path)
-        .status()
-        .wrap_err_with(|| format!("打开编辑器失败: {}", editor))?;
-
-    println!("✓ 已保存。使用 /identity reload 立即生效，或重启 rrclaw。");
-    Ok(())
+    write_identity_file(&path, &content)
 }
 
 /// /identity show <type> 实现
@@ -513,42 +799,6 @@ fn cmd_identity_show(file_type: Option<&str>, data_dir: &std::path::Path, worksp
     }
     Ok(())
 }
-
-/// 身份文件模板
-const TEMPLATE_USER: &str = r#"## 用户信息
-
-- 主要技术栈：（填写你的技术背景）
-- 工作语言：中文
-- 回复风格：简洁直接，直接给结论和代码
-
-## 偏好约定
-
-- 代码示例省略明显的 use 声明
-- 不需要每次都加免责声明
-"#;
-
-const TEMPLATE_SOUL: &str = r#"你的名字是 Claw。
-
-- 说话风格：直接、简洁，不废话
-- 不用"当然！"、"好的！"等开头
-- 对代码问题给出具体答案
-- 如果不确定，直接说"不确定，需要查一下"
-"#;
-
-const TEMPLATE_AGENT: &str = r#"## 项目约定
-
-### 代码规范
-
-- （填写代码风格要求，如：所有代码必须通过 clippy）
-
-### Git 提交
-
-- （填写提交规范，如：feat/fix/docs/test 前缀）
-
-### 禁止事项
-
-- （填写项目中的禁止事项）
-"#;
 
 /// 获取用户全局 skills 目录 ~/.rrclaw/skills/
 fn global_skills_dir() -> Result<std::path::PathBuf> {
@@ -1225,5 +1475,51 @@ model = "deepseek-chat"
         assert_eq!(doc["providers"]["glm"]["model"].as_str(), Some("glm-4.7"));
         // 原有配置应保留
         assert_eq!(doc["default"]["provider"].as_str(), Some("deepseek"));
+    }
+
+    // ─── extract_field 测试 ────────────────────────────────────────────
+
+    #[test]
+    fn extract_field_finds_value() {
+        let content = "## 用户信息\n\n- 主要技术栈：Rust, Python\n- 工作语言：中文\n";
+        assert_eq!(extract_field(content, "主要技术栈"), "Rust, Python");
+        assert_eq!(extract_field(content, "工作语言"), "中文");
+    }
+
+    #[test]
+    fn extract_field_returns_empty_when_missing() {
+        let content = "- 工作语言：中文\n";
+        assert_eq!(extract_field(content, "时区"), "");
+    }
+
+    #[test]
+    fn extract_field_trims_whitespace() {
+        let content = "-  回复风格：  简洁直接  \n";
+        // 行首 trim 处理：行本身有多余空格
+        let content2 = "- 回复风格： 简洁直接 \n";
+        assert_eq!(extract_field(content2, "回复风格"), "简洁直接");
+    }
+
+    // ─── extract_section_items 测试 ──────────────────────────────────
+
+    #[test]
+    fn extract_section_items_collects_lines() {
+        let content = "## 代码规范\n\n- 通过 clippy\n- 禁止 unwrap()\n\n## Git 提交规范\n\n- feat/fix 前缀\n";
+        let items = extract_section_items(content, "代码规范");
+        assert_eq!(items, vec!["通过 clippy", "禁止 unwrap()"]);
+    }
+
+    #[test]
+    fn extract_section_items_stops_at_next_header() {
+        let content = "## 代码规范\n- item1\n## 禁止事项\n- item2\n";
+        let items = extract_section_items(content, "代码规范");
+        assert_eq!(items, vec!["item1"]);
+    }
+
+    #[test]
+    fn extract_section_items_returns_empty_for_missing_section() {
+        let content = "## 其他节\n- item1\n";
+        let items = extract_section_items(content, "代码规范");
+        assert!(items.is_empty());
     }
 }
