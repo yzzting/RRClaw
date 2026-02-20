@@ -1,6 +1,7 @@
 pub mod config;
 pub mod file;
 pub mod git;
+pub mod http;
 pub mod memory;
 pub mod self_info;
 pub mod shell;
@@ -18,6 +19,7 @@ use crate::skills::SkillMeta;
 use config::ConfigTool;
 use file::{FileReadTool, FileWriteTool};
 use git::GitTool;
+use http::HttpRequestTool;
 use memory::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
 use self_info::SelfInfoTool;
 use shell::ShellTool;
@@ -43,5 +45,6 @@ pub fn create_tools(
         Box::new(MemoryStoreTool::new(memory.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory)),
+        Box::new(HttpRequestTool),
     ]
 }
