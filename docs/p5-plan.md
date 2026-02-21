@@ -9,9 +9,9 @@
 | P5-1 | HTTP Request Tool | ZeroClaw + IronClaw | 低 | ★★★★★ | [详细设计](p5-http-tool.md) ✅ |
 | P5-2 | 身份文件系统（AGENT.md/USER.md） | ZeroClaw + IronClaw | 低 | ★★★★☆ | [详细设计](p5-identity-files.md) ✅ |
 | P5-3 | ActionTracker 操作速率限制 | ZeroClaw | 低 | ★★★★☆ | [详细设计](p5-action-tracker.md) ✅ |
-| P5-4 | Prompt Injection 防御 | IronClaw | 中 | ★★★☆☆ | 本文档 |
-| P5-5 | Routines 定时任务系统 | OpenClaw + IronClaw | 高 | ★★★☆☆ | 本文档 |
-| P5-6 | Discord Channel | ZeroClaw + OpenClaw | 中 | ★★☆☆☆ | 本文档 |
+| P5-4 | Prompt Injection 防御 | IronClaw | 中 | ★★★☆☆ | [详细设计](p5-prompt-injection.md) ✅ |
+| P5-5 | Routines 定时任务系统 | OpenClaw + IronClaw | 高 | ★★★☆☆ | [详细设计](p5-routines.md) ✅ |
+| P5-6 | Discord Channel | ZeroClaw + OpenClaw | 中 | ★★☆☆☆ | [详细设计](p5-discord.md) ✅ |
 
 ---
 
