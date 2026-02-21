@@ -141,6 +141,50 @@ async fn run_agent(
             .wrap_err("初始化 Memory 失败")?,
     );
 
+    // ─── RoutineEngine 初始化 ────────────────────────────────────────────
+    // 构建 Routine 列表（从 config 的静态配置转换）
+    let static_routines: Vec<rrclaw::routines::Routine> = config
+        .routines
+        .jobs
+        .iter()
+        .map(|job| rrclaw::routines::Routine {
+            name: job.name.clone(),
+            schedule: job.schedule.clone(),
+            message: job.message.clone(),
+            channel: job.channel.clone(),
+            enabled: job.enabled,
+            source: rrclaw::routines::RoutineSource::Config,
+        })
+        .collect();
+
+    // 初始化 RoutineEngine
+    let routines_db_path = data_dir.join("routines.db");
+    let routine_engine = match rrclaw::routines::RoutineEngine::new(
+        static_routines,
+        Arc::new(config.clone()),
+        memory.clone() as Arc<dyn rrclaw::memory::Memory>,
+        &routines_db_path,
+    )
+    .await
+    {
+        Ok(engine) => {
+            let engine = Arc::new(engine);
+            // 后台启动调度器（不阻塞 REPL）
+            let engine_clone = Arc::clone(&engine);
+            tokio::spawn(async move {
+                if let Err(e) = engine_clone.start().await {
+                    tracing::error!("RoutineEngine 启动失败: {}", e);
+                }
+            });
+            Some(engine)
+        }
+        Err(e) => {
+            tracing::warn!("初始化 RoutineEngine 失败，跳过定时任务: {}", e);
+            None
+        }
+    };
+    // ─── RoutineEngine 初始化结束 ────────────────────────────────────────
+
     // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills，MemoryTools 需要 memory）
     let mut tools = rrclaw::tools::create_tools(
         config.clone(),
@@ -149,6 +193,7 @@ async fn run_agent(
         config_path.clone(),
         skills.clone(),
         memory.clone() as Arc<dyn rrclaw::memory::Memory>,
+        routine_engine.clone(),
     );
 
     // MCP 工具加载（可选，配置了才加载）
@@ -214,7 +259,7 @@ async fn run_agent(
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
         // 传 rrclaw_home（~/.rrclaw/）而非 data_dir（~/.rrclaw/data/），供 /identity 命令使用
-        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills, rrclaw_home).await?,
+        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills, rrclaw_home, routine_engine).await?,
     }
 
     // 退出时关闭 MCP 连接

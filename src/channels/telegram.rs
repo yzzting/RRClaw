@@ -69,6 +69,7 @@ impl AgentFactory {
             config_path,
             vec![], // Telegram 暂不加载 skills
             self.memory.clone() as Arc<dyn Memory>,
+            None,   // Telegram channel 暂不集成 RoutineTool
         );
         let policy = SecurityPolicy {
             autonomy: self.config.security.autonomy.clone(),
