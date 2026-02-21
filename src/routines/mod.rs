@@ -714,10 +714,10 @@ impl RoutineEngine {
             )
             .map_err(|e| eyre!("保存 Routine 失败: {}", e))?;
         }
+        // 添加到调度器（立即生效，无需重启）- 必须先成功，否则回滚不写
+        self.clone().schedule_job(routine).await?;
         // 同步更新内存 Vec（write lock，短暂持有）
         self.routines.write().unwrap().push(routine.clone());
-        // 添加到调度器（立即生效，无需重启）
-        self.schedule_job(routine).await?;
         Ok(())
     }
 
