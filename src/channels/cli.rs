@@ -11,6 +11,7 @@ use crate::agent::Agent;
 use crate::config::{Config, ProviderConfig, PROVIDERS};
 use crate::memory::SqliteMemory;
 use crate::providers::{StreamEvent, ToolStatusKind};
+use crate::routines::{Routine, RoutineEngine, RoutineSource};
 use crate::skills::{load_skill_content, validate_skill_name, SkillMeta, SkillSource};
 
 /// 当天日期作为 session ID
@@ -87,6 +88,7 @@ pub async fn run_repl(
     config: &Config,
     skills: Vec<SkillMeta>,
     data_dir: &std::path::Path,
+    routine_engine: Option<Arc<RoutineEngine>>,
 ) -> Result<()> {
     setup_cli_confirm(agent);
 
@@ -133,7 +135,7 @@ pub async fn run_repl(
                 // 斜杠命令
                 if let Some(cmd) = input.strip_prefix('/') {
                     let workspace_dir = agent.policy().workspace_dir.clone();
-                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir).await?;
+                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone()).await?;
                     continue;
                 }
 
@@ -183,6 +185,7 @@ async fn handle_slash_command(
     skills: &[SkillMeta],
     data_dir: &std::path::Path,
     workspace_dir: std::path::PathBuf,
+    routine_engine: Option<Arc<RoutineEngine>>,
 ) -> Result<()> {
     let name = cmd.split_whitespace().next().unwrap_or(cmd);
 
@@ -228,6 +231,11 @@ async fn handle_slash_command(
             // 切掉命令名，剩余部分作为参数
             let rest = cmd["identity".len()..].trim();
             cmd_identity(rest, agent, data_dir, workspace_dir)?;
+        }
+        "routine" => {
+            // 切掉命令名，剩余部分作为参数
+            let rest = cmd["routine".len()..].trim();
+            cmd_routine(rest, routine_engine).await;
         }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
@@ -1181,6 +1189,193 @@ fn cmd_mode(agent: &mut Agent) -> Result<()> {
     Ok(())
 }
 
+// ─── /routine 命令实现 ────────────────────────────────────────────────────
+
+/// /routine 命令入口 —— 解析子命令后分发
+async fn cmd_routine(rest: &str, engine: Option<Arc<RoutineEngine>>) {
+    let mut parts = rest.splitn(2, ' ');
+    let sub = parts.next().unwrap_or("").trim();
+    let arg = parts.next().map(|s| s.trim());
+
+    match sub {
+        "" | "list" => cmd_routine_list(&engine),
+        "add" => cmd_routine_add(&engine, arg).await,
+        "delete" | "rm" => cmd_routine_delete(&engine, arg).await,
+        "enable" => cmd_routine_enable(&engine, arg, true).await,
+        "disable" => cmd_routine_enable(&engine, arg, false).await,
+        "run" => cmd_routine_run(&engine, arg).await,
+        "logs" => cmd_routine_logs(&engine, arg).await,
+        _ => {
+            println!("未知的 /routine 子命令。可用：list / add / delete / enable / disable / run / logs");
+        }
+    }
+}
+
+/// /routine list — 列出所有 Routine
+fn cmd_routine_list(engine: &Option<Arc<RoutineEngine>>) {
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => {
+            let routines = e.list_routines();
+            if routines.is_empty() {
+                println!("暂无 Routine 任务。使用 /routine add 创建。");
+                return;
+            }
+            println!("{:<20} {:<15} {:<8} {:<10} 消息（前 40 字）",
+                "名称", "调度", "状态", "通道");
+            println!("{}", "-".repeat(80));
+            for r in routines {
+                let status = if r.enabled { "✓ 启用" } else { "✗ 禁用" };
+                let preview: String = r.message.chars().take(40).collect();
+                println!("{:<20} {:<15} {:<8} {:<10} {}",
+                    r.name, r.schedule, status, r.channel, preview);
+            }
+        }
+    }
+}
+
+/// /routine add <name> "<时间描述>" "<消息>" [channel]
+/// 支持自然语言时间描述，如 "每天早上8点"
+async fn cmd_routine_add(engine: &Option<Arc<RoutineEngine>>, args: Option<&str>) {
+    let args = args.unwrap_or("");
+    // 解析参数（使用 shell_words 处理带引号的参数）
+    let parts = match shell_words::split(args) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("参数解析失败: {}", e);
+            return;
+        }
+    };
+    if parts.len() < 3 {
+        println!("用法: /routine add <名称> <执行时间> <消息> [channel]");
+        println!("示例: /routine add daily_brief \"每天早上8点\" \"生成今日日报\" cli");
+        println!();
+        println!("支持的自然语言：");
+        println!("  - 每天早上8点 / 每天下午3点 / 每天晚上8点");
+        println!("  - 每小时 / 每2小时");
+        println!("  - 每周一早上9点 / 每周五下午5点");
+        println!("  - 每月15号上午10点");
+        return;
+    }
+
+    let name = parts[0].clone();
+    let schedule_desc = parts[1].clone();
+    let message = parts[2].clone();
+    let channel = parts.get(3).cloned().unwrap_or_else(|| "cli".to_string());
+
+    // 解析时间描述为 cron（支持自然语言）
+    let schedule = match crate::routines::parse_schedule_to_cron(&schedule_desc) {
+        Ok(cron) => {
+            println!("✓ 已解析: \"{}\" → {}", schedule_desc, cron);
+            cron
+        }
+        Err(e) => {
+            println!("时间解析失败: {}", e);
+            return;
+        }
+    };
+
+    let routine = Routine {
+        name: name.clone(),
+        schedule,
+        message,
+        channel,
+        enabled: true,
+        source: RoutineSource::Dynamic,
+    };
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => match e.persist_add_routine(&routine).await {
+            Ok(()) => println!("✓ Routine '{}' 已保存，重启 RRClaw 后生效。", name),
+            Err(err) => println!("✗ 保存失败: {}", err),
+        },
+    }
+}
+
+/// /routine delete <name>
+async fn cmd_routine_delete(engine: &Option<Arc<RoutineEngine>>, name: Option<&str>) {
+    let name = name.unwrap_or("");
+    if name.is_empty() {
+        println!("用法: /routine delete <name>");
+        return;
+    }
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => match e.persist_delete_routine(name).await {
+            Ok(()) => println!("✓ Routine '{}' 已删除，重启 RRClaw 后生效。", name),
+            Err(err) => println!("✗ 删除失败: {}", err),
+        },
+    }
+}
+
+/// /routine enable|disable <name>
+async fn cmd_routine_enable(engine: &Option<Arc<RoutineEngine>>, name: Option<&str>, enabled: bool) {
+    let name = name.unwrap_or("");
+    if name.is_empty() {
+        println!("用法: /routine {} <name>", if enabled { "enable" } else { "disable" });
+        return;
+    }
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => {
+            let action = if enabled { "启用" } else { "禁用" };
+            match e.persist_set_enabled(name, enabled).await {
+                Ok(()) => println!("✓ Routine '{}' 已{}，重启 RRClaw 后生效。", name, action),
+                Err(err) => println!("✗ 更新失败: {}", err),
+            }
+        }
+    }
+}
+
+/// /routine run <name> — 手动触发 Routine 执行
+async fn cmd_routine_run(engine: &Option<Arc<RoutineEngine>>, name: Option<&str>) {
+    let name = name.unwrap_or("");
+    if name.is_empty() {
+        println!("用法: /routine run <name>");
+        return;
+    }
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => {
+            println!("正在手动触发 Routine: {} ...", name);
+            match e.execute_routine(name).await {
+                Ok(output) => {
+                    println!("\n[Routine: {}]\n{}", name, output);
+                }
+                Err(err) => {
+                    println!("Routine '{}' 执行失败: {}", name, err);
+                }
+            }
+        }
+    }
+}
+
+/// /routine logs [limit] — 查看执行日志
+async fn cmd_routine_logs(engine: &Option<Arc<RoutineEngine>>, args: Option<&str>) {
+    let limit = args.and_then(|s| s.parse().ok()).unwrap_or(5);
+
+    match engine {
+        None => println!("Routine 系统未初始化"),
+        Some(e) => {
+            let logs = e.get_recent_logs(limit).await;
+            if logs.is_empty() {
+                println!("暂无执行记录。");
+                return;
+            }
+            println!("最近 {} 条执行记录：", logs.len());
+            for log in &logs {
+                let status = if log.success { "✓ 成功" } else { "✗ 失败" };
+                let started = &log.started_at[..19]; // 只取日期时间部分
+                println!("{} | {} | {} | {}",
+                    started, log.routine_name, status, log.output_preview);
+                if let Some(err) = &log.error {
+                    println!("  错误: {}", err);
+                }
+            }
+        }
+    }
+}
+
 /// /mcp — 列出当前已加载的 MCP 工具
 fn cmd_mcp(agent: &Agent) {
     let all_tools = agent.tool_names();
@@ -1244,6 +1439,14 @@ fn print_help() {
     println!("  /identity show <type>  查看身份文件内容（user/soul/agent）");
     println!("  /identity edit <type>  编辑身份文件（$EDITOR）");
     println!("  /identity reload       重新加载身份文件（立即生效）");
+    println!();
+    println!("  /routine               列出所有定时任务");
+    println!("  /routine add           添加定时任务");
+    println!("  /routine delete        删除定时任务");
+    println!("  /routine enable        启用定时任务");
+    println!("  /routine disable       禁用定时任务");
+    println!("  /routine run           手动触发定时任务");
+    println!("  /routine logs          查看执行日志");
     println!();
     println!("  exit, quit             退出");
     println!();
