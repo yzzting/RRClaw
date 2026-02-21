@@ -518,9 +518,27 @@ impl Agent {
                 info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
+
+                // ─── Prompt Injection 检测 ───────────────────────────────────────────
+                let final_content = if self.policy.injection_check {
+                    let injection = crate::security::injection::check_tool_result(&result);
+                    if let Some(ref sev) = injection.severity {
+                        info!(
+                            tool = %tc.name,
+                            severity = ?sev,
+                            reason = ?injection.reason,
+                            "Prompt injection detected in tool result"
+                        );
+                    }
+                    injection.sanitized
+                } else {
+                    result
+                };
+                // ─── 检测结束 ─────────────────────────────────────────────────────────
+
                 self.history.push(ConversationMessage::ToolResult {
                     tool_call_id: tc.id.clone(),
-                    content: result,
+                    content: final_content,
                 });
             }
         }
@@ -715,9 +733,26 @@ impl Agent {
                     }).await;
                 }
 
+                // ─── Prompt Injection 检测 ───────────────────────────────────────────
+                let final_content = if self.policy.injection_check {
+                    let injection = crate::security::injection::check_tool_result(&result);
+                    if let Some(ref sev) = injection.severity {
+                        info!(
+                            tool = %tc.name,
+                            severity = ?sev,
+                            reason = ?injection.reason,
+                            "Prompt injection detected in tool result"
+                        );
+                    }
+                    injection.sanitized
+                } else {
+                    result
+                };
+                // ─── 检测结束 ─────────────────────────────────────────────────────────
+
                 self.history.push(ConversationMessage::ToolResult {
                     tool_call_id: tc.id.clone(),
-                    content: result,
+                    content: final_content,
                 });
             }
         }
@@ -1161,6 +1196,7 @@ mod tests {
             workspace_dir: PathBuf::from("/tmp"),
             blocked_paths: vec![],
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 
