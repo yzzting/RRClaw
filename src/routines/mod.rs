@@ -940,6 +940,22 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
         }
     }
 
+    // 5.2. 每 X 秒（cron 不支持秒，转换为每分钟）
+    if let Ok(re) = Regex::new(r"每(\d+)秒") {
+        if let Some(caps) = re.captures(desc) {
+            let seconds: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
+                eyre!("无效的秒数")
+            })?;
+            // cron 不支持秒，建议使用每分钟
+            if seconds > 0 {
+                return Err(eyre!(
+                    "cron 不支持秒级调度。\n\
+                     建议：使用 '每1分钟' 或 cron 表达式 '* * * * *'（每分钟）"
+                ));
+            }
+        }
+    }
+
     // 8. 每月 X 号
     if let Ok(re) = Regex::new(r"每月(\d{1,2})号?\s*(?:早上|上午|下午|晚上)?(\d{1,2})点?") {
         if let Some(caps) = re.captures(desc) {
@@ -959,12 +975,14 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
 
     // 无法解析
     Err(eyre!(
-        "无法解析时间描述 '{}'。支持格式：\n\
-         - 每5分钟 / 每30分钟\n\
-         - 每天早上8点 / 每天下午3点 / 每天晚上8点\n\
+        "无法解析时间描述 '{}'。\n\n\
+         支持格式：\n\
+         - 每1分钟 / 每5分钟 / 每30分钟\n\
+         - 每天早上8点 / 每天下午3点 / 每天晚上8点 / 每天9点\n\
          - 每小时 / 每2小时\n\
          - 每周一早上9点 / 每周五下午5点\n\
-         - 每月15号上午10点",
+         - 每月15号上午10点\n\n\
+         也可直接使用 cron 表达式，如 '* * * * *'（每分钟）",
         desc
     ))
 }
