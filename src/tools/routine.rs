@@ -1,14 +1,17 @@
 //! RoutineTool — 让 LLM 通过 Agent Loop 管理定时任务
 //!
 //! 设计原则：不在 CLI 层拦截用户输入，而是让 LLM 理解意图后调用此工具。
-//! LLM 天然懂 cron 语法，在 schedule 参数描述中说明格式即可，无需额外 NLP 层。
+//! 支持两种 schedule 格式：
+//! 1. 正则解析：每5分钟、每天9点、每周一早上9点等常见格式
+//! 2. LLM 兜底：复杂自然语言如"每20秒"、"半小时一次"等调用 LLM 转换为 cron
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{eyre, Result};
 use serde_json::{json, Value};
 
+use crate::providers::traits::{ChatMessage, ConversationMessage, Provider};
 use crate::routines::RoutineEngine;
 use crate::security::SecurityPolicy;
 use crate::tools::traits::{Tool, ToolResult};
@@ -18,11 +21,57 @@ use crate::tools::traits::{Tool, ToolResult};
 /// 支持 actions：create / list / delete / enable / disable / run / logs
 pub struct RoutineTool {
     engine: Arc<RoutineEngine>,
+    provider: Option<Arc<dyn Provider>>,
+    model: String,
 }
 
 impl RoutineTool {
-    pub fn new(engine: Arc<RoutineEngine>) -> Self {
-        Self { engine }
+    pub fn new(engine: Arc<RoutineEngine>, provider: Option<Arc<dyn Provider>>, model: String) -> Self {
+        Self { engine, provider, model }
+    }
+
+    /// 用 LLM 将自然语言 schedule 转换为 cron 表达式
+    async fn parse_schedule_with_llm(&self, desc: &str) -> Result<String> {
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            eyre!("无 LLM 可用。请直接使用 cron 表达式。")
+        })?;
+
+        let messages = vec![
+            ConversationMessage::Chat(ChatMessage {
+                role: "system".to_string(),
+                content: "你是一个 cron 表达式转换助手。\
+                         将用户的中文时间描述转换为标准 5 字段 cron 表达式。\
+                         只返回 cron 表达式，不要解释。\
+                         \
+                         转换规则：\
+                         - 分(0-59) 时(0-23) 日(1-31) 月(1-12) 周(0-6, 0=周日)\
+                         - 每X秒 → 每分钟（cron 不支持秒）\
+                         - \"每20秒\" → \"* * * * *\"\
+                         - \"半小时一次\" → \"*/30 * * * *\"\
+                         - \"每天9点\" → \"0 9 * * *\"\
+                         - \"每周一早上9点\" → \"0 9 * * 1\"".to_string(),
+                reasoning_content: None,
+            }),
+            ConversationMessage::Chat(ChatMessage {
+                role: "user".to_string(),
+                content: format!("转换为 cron：{}", desc),
+                reasoning_content: None,
+            }),
+        ];
+
+        let resp = provider
+            .chat_with_tools(&messages, &[], &self.model, 0.0)
+            .await?;
+
+        let cron = resp.text.unwrap_or_default().trim().to_string();
+
+        // 简单验证：必须是 5 个字段
+        let parts: Vec<&str> = cron.split_whitespace().collect();
+        if parts.len() != 5 {
+            return Err(eyre!("LLM 返回的不是有效 cron：{}", cron));
+        }
+
+        Ok(cron)
     }
 }
 
@@ -34,12 +83,10 @@ impl Tool for RoutineTool {
 
     fn description(&self) -> &str {
         "管理定时任务（Routines）。支持创建、列出、删除、启用/禁用、手动触发、查看日志。\n\
-         创建时 schedule 参数接受标准 5 字段 cron 表达式（分 时 日 月 周）：\n\
-         - \"0 8 * * *\"     每天早 8 点\n\
-         - \"0 */2 * * *\"   每 2 小时\n\
-         - \"0 9 * * 1\"     每周一早 9 点\n\
-         - \"*/10 * * * *\"  每 10 分钟\n\
-         创建/删除/启用/禁用立即对 list/run 生效；自动调度下次启动后生效（热加载为 V2 功能）。"
+         schedule 参数支持：\n\
+         1. 自然语言：每5分钟、每天9点、每周一早上9点、每20秒（LLM 自动转换为 cron）\n\
+         2. 直接使用 cron 表达式：\"0 8 * * *\"（每天早 8 点）、\"* * * * *\"（每分钟）\n\
+         创建/删除/启用/禁用立即对 list/run 生效。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -132,14 +179,27 @@ impl RoutineTool {
         };
 
         // 解析自然语言时间描述为 cron 表达式
+        // 先尝试正则解析，失败则用 LLM 兜底
         let schedule = match crate::routines::parse_schedule_to_cron(&schedule_input) {
             Ok(cron) => cron,
-            Err(e) => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("schedule 解析失败: {}", e)),
-                ..Default::default()
-            }),
+            Err(_) => {
+                // LLM 兜底
+                match self.parse_schedule_with_llm(&schedule_input).await {
+                    Ok(cron) => cron,
+                    Err(llm_err) => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(format!(
+                                "schedule 解析失败。正则无法解析，且 LLM 错误: {}\n\
+                                 请直接使用 cron 表达式，如 '* * * * *'（每分钟）",
+                                llm_err
+                            )),
+                            ..Default::default()
+                        })
+                    }
+                }
+            }
         };
         let message = match args.get("message").and_then(|v| v.as_str()) {
             Some(m) if !m.is_empty() => m.to_string(),
