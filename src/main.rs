@@ -181,6 +181,7 @@ async fn run_agent(
         workspace_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         blocked_paths: rrclaw::security::SecurityPolicy::default().blocked_paths,
         http_allowed_hosts: config.security.http_allowed_hosts.clone(),
+        injection_check: config.security.injection_check,
     };
 
     // ─── 身份文件加载（P5-2）────────────────────────────────────────────

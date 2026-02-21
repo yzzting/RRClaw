@@ -77,6 +77,7 @@ impl AgentFactory {
                 .unwrap_or_else(|_| std::path::PathBuf::from(".")),
             blocked_paths: SecurityPolicy::default().blocked_paths,
             http_allowed_hosts: self.config.security.http_allowed_hosts.clone(),
+            injection_check: self.config.security.injection_check,
         };
 
         Ok(Agent::new(

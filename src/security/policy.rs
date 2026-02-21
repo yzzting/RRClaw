@@ -17,6 +17,8 @@ pub struct SecurityPolicy {
     pub blocked_paths: Vec<PathBuf>,
     /// HTTP 请求白名单，允许访问的 host/IP（仅在 Full 模式下生效）
     pub http_allowed_hosts: Vec<String>,
+    /// 是否启用 Prompt Injection 检测，默认 true
+    pub injection_check: bool,
 }
 
 impl Default for SecurityPolicy {
@@ -41,6 +43,7 @@ impl Default for SecurityPolicy {
                 PathBuf::from("/root"),
             ],
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 }
@@ -181,6 +184,7 @@ mod tests {
             workspace_dir: workspace.to_path_buf(),
             blocked_paths: vec![PathBuf::from("/etc"), PathBuf::from("/root")],
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 

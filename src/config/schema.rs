@@ -66,6 +66,14 @@ pub struct SecurityConfig {
     /// HTTP 请求白名单，允许访问的 host/IP
     #[serde(default)]
     pub http_allowed_hosts: Vec<String>,
+    /// 是否启用 Prompt Injection 检测，默认 true
+    /// 设为 false 时完全跳过检测（适合完全信任所有工具输出的内部环境）
+    #[serde(default = "default_injection_check")]
+    pub injection_check: bool,
+}
+
+fn default_injection_check() -> bool {
+    true
 }
 
 /// 可靠性配置
@@ -168,6 +176,7 @@ impl Default for SecurityConfig {
             .collect(),
             workspace_only: true,
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 }
