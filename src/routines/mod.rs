@@ -871,7 +871,7 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
             })?;
             if minutes > 0 && minutes <= 59 {
                 // 生成显式的分钟列表（有些 cron 实现不支持 */n 语法）
-                let mut mins: Vec<u32> = (0..60).step_by(minutes as usize).collect();
+                let mins: Vec<u32> = (0..60).step_by(minutes as usize).collect();
                 return Ok(format!("{} * * * *", mins.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",")));
             }
         }
@@ -885,7 +885,7 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
             })?;
             if hours > 0 && hours <= 24 {
                 // 生成显式的小时列表
-                let mut hrs: Vec<u32> = (0..24).step_by(hours as usize).collect();
+                let hrs: Vec<u32> = (0..24).step_by(hours as usize).collect();
                 return Ok(format!("0 {} * * *", hrs.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",")));
             }
         }
