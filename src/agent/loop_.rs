@@ -145,6 +145,8 @@ pub struct Agent {
     routed_skill_content: Option<String>,
     /// 启动时加载的身份文件内容
     identity_context: Option<String>,
+    /// 当前执行的 Routine 名称（None 表示普通对话模式）
+    routine_name: Option<String>,
 }
 
 impl Agent {
@@ -175,6 +177,7 @@ impl Agent {
             skills_meta,
             routed_skill_content: None,
             identity_context,
+            routine_name: None,
         }
     }
 
@@ -332,6 +335,11 @@ impl Agent {
     /// 切换自主级别（运行时生效，不持久化）
     pub fn set_autonomy(&mut self, level: crate::security::AutonomyLevel) {
         self.policy.autonomy = level;
+    }
+
+    /// 标记当前 Agent 为 Routine 执行模式（注入 Routine 专属 system prompt 段）
+    pub fn set_routine_name(&mut self, name: String) {
+        self.routine_name = Some(name);
     }
 
     /// 重新加载身份文件（无需重启）
@@ -870,6 +878,22 @@ impl Agent {
         // [4.5] 已路由的 skill L2 行为指南（Phase 1 结果，每轮重置）
         if let Some(skill_content) = &self.routed_skill_content {
             parts.push(format!("[行为指南]\n{}", skill_content));
+        }
+
+        // [4.6] Routine 执行规范（仅在 Routine 模式下注入）
+        if let Some(name) = &self.routine_name {
+            parts.push(format!(
+                "[Routine 执行规范]\n\
+                 你正在执行定时任务 '{name}'，这是一个自动化任务，不会有用户交互。\n\
+                 - 如果消息前缀有 [历史成功方法参考]，优先尝试该方法\n\
+                 - 成功完成任务后，用 memory_store 记录有效方法：\n\
+                 \x20 - key: \"routine:{name}:approach\"\n\
+                 \x20 - category: \"custom\"\n\
+                 \x20 - content: 描述成功方法（使用的 URL、headers、数据提取路径等）\n\
+                 - 如果发现更好的方法，直接覆盖旧记录\n\
+                 - 失败时不要更新记录",
+                name = name,
+            ));
         }
 
         // [5] 环境信息（精简，详情通过 self_info 工具查询）
@@ -2148,6 +2172,51 @@ mod tests {
         let output = format_history_for_summary(&messages);
         assert!(output.contains("shell"));
         assert!(output.contains("工具调用"));
+    }
+
+    // --- routine_name / build_system_prompt 测试 ---
+
+    fn make_agent_no_skills() -> Agent {
+        Agent::new(
+            Box::new(MockProvider::new(vec![])),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".into(),
+            "http://test".into(),
+            "model".into(),
+            0.7,
+            vec![],
+            None,
+        )
+    }
+
+    #[test]
+    fn routine_system_prompt_injected_when_routine_name_set() {
+        let mut agent = make_agent_no_skills();
+        agent.set_routine_name("tesla_stock_monitor".to_string());
+        let prompt = agent.build_system_prompt(&[]);
+        assert!(prompt.contains("[Routine 执行规范]"), "应包含 Routine 规范段");
+        assert!(prompt.contains("tesla_stock_monitor"), "应包含 Routine 名称");
+        assert!(prompt.contains("memory_store"), "应包含 memory_store 指令");
+        assert!(prompt.contains("routine:tesla_stock_monitor:approach"), "应包含正确的 key");
+    }
+
+    #[test]
+    fn routine_system_prompt_absent_in_normal_mode() {
+        let agent = make_agent_no_skills();
+        let prompt = agent.build_system_prompt(&[]);
+        assert!(!prompt.contains("[Routine 执行规范]"), "普通模式不应含 Routine 规范段");
+    }
+
+    #[test]
+    fn set_routine_name_overwrites_previous() {
+        let mut agent = make_agent_no_skills();
+        agent.set_routine_name("first".to_string());
+        agent.set_routine_name("second".to_string());
+        let prompt = agent.build_system_prompt(&[]);
+        assert!(prompt.contains("second"), "应包含最新的 routine 名称");
+        assert!(!prompt.contains("first"), "不应包含旧的 routine 名称");
     }
 
     // --- summarize_history 测试 ---
