@@ -121,12 +121,23 @@ impl RoutineTool {
                 ..Default::default()
             }),
         };
-        let schedule = match args.get("schedule").and_then(|v| v.as_str()) {
+        let schedule_input = match args.get("schedule").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some("create 操作需要 schedule 参数（5 字段 cron 表达式）".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        // 解析自然语言时间描述为 cron 表达式
+        let schedule = match crate::routines::parse_schedule_to_cron(&schedule_input) {
+            Ok(cron) => cron,
+            Err(e) => return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("schedule 解析失败: {}", e)),
                 ..Default::default()
             }),
         };
@@ -156,7 +167,7 @@ impl RoutineTool {
         match self.engine.clone().persist_add_routine(&routine).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已创建定时任务 '{}'（schedule: {}）。list/run 立即可用。", name, schedule),
+                output: format!("✓ 已创建定时任务 '{}'（{}）。list/run 立即可用。", name, schedule),
                 error: None,
                 ..Default::default()
             }),

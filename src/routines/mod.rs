@@ -870,7 +870,11 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
                 eyre!("无效的分钟数")
             })?;
             if minutes > 0 && minutes <= 59 {
-                // 生成显式的分钟列表（有些 cron 实现不支持 */n 语法）
+                // 每1分钟 = 每分钟，直接用 * * * * *
+                if minutes == 1 {
+                    return Ok("* * * * *".to_string());
+                }
+                // 每N分钟（N>1）：生成显式的分钟列表
                 let mins: Vec<u32> = (0..60).step_by(minutes as usize).collect();
                 return Ok(format!("{} * * * *", mins.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",")));
             }
@@ -1116,6 +1120,14 @@ mod tests {
         let cron = parse_schedule_to_cron("每2小时").unwrap();
         // 每2小时: 0,2,4,6,8,10,12,14,16,18,20,22
         assert_eq!(cron, "0 0,2,4,6,8,10,12,14,16,18,20,22 * * *");
+    }
+
+    #[test]
+    #[test]
+    fn parse_every_1_minute() {
+        let cron = parse_schedule_to_cron("每1分钟").unwrap();
+        // 每1分钟 = 每分钟
+        assert_eq!(cron, "* * * * *");
     }
 
     #[test]
