@@ -283,7 +283,7 @@ fn build_block_message() -> String {
     "[安全] 工具输出已被截断：检测到疑似 Prompt Injection 内容。\n\
      此工具的返回数据可能含有试图覆盖 AI 指令的恶意文本。\n\
      如确信工具输出安全（例如你完全控制该工具的数据源），\
-     可在 ~/.rrclaw/config.toml 中设置：\n\
+     可在 ~/.rrclaw/config.toml 中设置：\n\n\
      [security]\n\
      injection_check = false"
         .to_string()
