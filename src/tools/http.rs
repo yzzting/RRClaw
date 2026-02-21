@@ -402,6 +402,7 @@ mod tests {
             workspace_dir: PathBuf::from("/tmp"),
             blocked_paths: vec![],
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 

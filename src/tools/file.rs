@@ -195,6 +195,7 @@ mod tests {
             workspace_dir: canonical,
             blocked_paths: vec![],
             http_allowed_hosts: vec![],
+            injection_check: true,
         }
     }
 
