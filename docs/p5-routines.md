@@ -1424,6 +1424,181 @@ Routine 触发时，用户可能正在 REPL 中输入命令。使用 `eprintln!`
 
 ---
 
+## 十六、Routine Memory Learning（P5-6）
+
+### 16.1 问题背景
+
+每次 Routine 触发都创建全新 Agent（`history` 为空，Memory 用 `NoopMemory`），LLM 不记得上次用什么方法成功过。
+
+**典型失败链**（以 `tesla_stock_monitor` 为例）：
+
+```
+第 N 次执行：发现 Yahoo Finance 需要 User-Agent: Mozilla/5.0 → 成功 ✓
+                                                                 ↓ 记忆全部丢失
+第 N+1 次执行：LLM 重新猜接口 → 不带 User-Agent → 429 →
+               fallback Google Finance → 1MB HTML → LLM API 耗时 4.5min → 超时 ✗
+```
+
+当前代码位置（[src/routines/mod.rs:467](../src/routines/mod.rs)）：
+
+```rust
+let mut agent = Agent::new(
+    provider,
+    tools,
+    Box::new(crate::memory::NoopMemory), // ← 问题根源：不读不写，每次从零开始
+    ...
+);
+```
+
+### 16.2 解决方案：Pre-recall + 共享 Memory 写回
+
+**不改变 LLM 自主决策的前提下**，让 Routine 能记住有效方法：
+
+```
+RoutineEngine::run_once()
+  ├── [Step 0] memory.recall("routine:{name}") → 拉取上次成功的方法描述
+  ├── [Step 1] 将 recalled context 拼入 message 前缀
+  │            "上次成功方法：用 http_request 请求 {url}，headers: {User-Agent: Mozilla/5.0}"
+  ├── [Step 2] 创建 Agent，传入共享 Memory（可读可写）
+  ├── [Step 3] agent.process_message(enhanced_message)
+  │            system prompt 中要求：成功后用 memory_store 保存有效方法
+  └── [Step 4] Agent 执行过程中自然调用 memory_store 记住有效方法
+```
+
+**核心原则**：
+- Step 0-1 是 RoutineEngine 层面的确定性行为（不依赖 LLM 记得去 recall）
+- Step 3-4 是 LLM 自主决策（agent-like），LLM 可以选择更新、替换或保留方法
+- 不限制 LLM 使用哪个接口，只是提供"上次有效方法"作为参考
+
+### 16.3 Memory 存储规范
+
+**Key 命名**：`routine:{name}:approach`
+
+**Category**：`MemoryCategory::Custom("routine")` — 与用户主记忆隔离，普通 `memory_recall` 不会意外召回
+
+**内容格式**（由 LLM 自由描述，人类可读）：
+
+```
+使用 http_request 工具，GET https://query1.finance.yahoo.com/v8/finance/chart/TSLA，
+headers 包含 {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}，
+从响应 JSON 的 chart.result[0].meta.regularMarketPrice 提取当前价格。
+```
+
+**失败时不更新**：若本次失败，保留上次成功的记录（不清除旧方法）
+
+### 16.4 改动范围
+
+#### 16.4.1 `src/routines/mod.rs` — `run_once()` 函数
+
+```rust
+async fn run_once(&self, routine: &Routine) -> Result<String> {
+    // ...（现有 provider/policy/tools 初始化不变）...
+
+    // ★ Step 0: 从 Memory 召回上次成功方法
+    let memory_key = format!("routine:{}:approach", routine.name);
+    let recalled = self.memory
+        .recall(&memory_key, 1)
+        .await
+        .unwrap_or_default();
+
+    // ★ Step 1: 构造增强版 message
+    let enhanced_message = if let Some(entry) = recalled.first() {
+        format!(
+            "[历史成功方法参考]\n{}\n\n---\n{}",
+            entry.content,
+            routine.message
+        )
+    } else {
+        routine.message.clone()
+    };
+
+    // ★ Step 2: 传入共享 Memory（允许 LLM 通过 memory_store 保存新方法）
+    let mut agent = Agent::new(
+        provider,
+        tools,
+        Arc::clone(&self.memory) as Arc<dyn Memory>,  // ← 从 NoopMemory 改为共享 Memory
+        policy,
+        ...
+    );
+
+    agent.set_autonomy(crate::security::AutonomyLevel::Full);
+    let output = agent.process_message(&enhanced_message).await?;
+    Ok(output)
+}
+```
+
+#### 16.4.2 Routine 专用 system prompt 段
+
+在 `build_routine_system_prompt()` 中新增提示段（仅在 Routine 执行上下文中生效）：
+
+```
+[Routine 执行规范]
+你正在执行定时任务 '{name}'，这是一个自动化任务，不会有用户交互。
+- 如果消息前缀有 [历史成功方法参考]，优先尝试该方法
+- 成功完成任务后，用 memory_store 记录有效方法：
+  - key: "routine:{name}:approach"
+  - category: "custom"
+  - content: 描述成功方法（使用的 URL、headers、数据提取路径等）
+- 如果发现更好的方法，直接覆盖旧记录
+- 失败时不要更新记录
+```
+
+#### 16.4.3 不需要新增 `MemoryCategory`
+
+`MemoryCategory::Custom(String)` 已存在，直接用 `Custom("routine")` 即可。
+
+### 16.5 执行流程示例
+
+**第 1 次执行**（无历史记录）：
+
+```
+message = "查询特斯拉（TSLA）当前股价..."（原始）
+→ LLM 自由探索接口
+→ 发现 Yahoo Finance + User-Agent 有效 → 成功
+→ memory_store: key=routine:tesla_stock_monitor:approach
+               content="GET https://query1.finance.yahoo.com/v8/finance/chart/TSLA, headers: {User-Agent: Mozilla/5.0}, 从 meta.regularMarketPrice 提取价格"
+```
+
+**第 2 次执行**（有历史记录）：
+
+```
+message = "[历史成功方法参考]
+GET https://query1.finance.yahoo.com/v8/finance/chart/TSLA, headers: {User-Agent: Mozilla/5.0}...
+---
+查询特斯拉（TSLA）当前股价..."
+→ LLM 直接按参考方法执行 → 成功（无 fallback，无超时）
+```
+
+### 16.6 边界情况
+
+| 情况 | 处理方式 |
+|------|----------|
+| 历史方法失效（API 下线） | LLM 失败后自行探索新方法，成功后覆盖旧记录 |
+| 首次执行无记录 | 降级为原始 message，行为与现在相同 |
+| memory_recall 报错 | `unwrap_or_default()` 降级，不影响执行 |
+| LLM 忘记调用 memory_store | 本次不记录，下次仍重探索；不会崩溃 |
+| 主 Agent 误 recall 到 routine 记录 | `Custom("routine")` category 与普通 recall 隔离，搜索词不匹配时不会返回 |
+
+### 16.7 改动文件汇总
+
+| 文件 | 改动 | 行数估计 |
+|------|------|---------|
+| `src/routines/mod.rs` | `run_once()` 加 recall+注入，改 NoopMemory→共享 Memory；新增 `build_routine_system_prompt()` | +40 行 |
+| `src/agent/loop_.rs` | `build_system_prompt()` 增加 routine_name 可选参数，有值时追加 Routine 执行规范段 | +15 行 |
+
+> `MemoryCategory`、`memory_store/recall` 工具、`Agent` 构造函数——均不需要改动。
+
+### 16.8 提交策略
+
+| # | commit message | 内容 |
+|---|----------------|------|
+| 1 | `docs: add routine memory learning design to p5-routines.md` | 本节内容 |
+| 2 | `feat: add routine execution system prompt builder` | `build_routine_system_prompt()` + Agent 接受可选 routine_context |
+| 3 | `feat: pre-recall and inject approach in run_once` | `run_once()` 的 Step 0-1，使用 `NoopMemory` → 共享 Memory |
+| 4 | `test: add routine memory recall tests` | 测试 recall 注入逻辑 |
+
+---
+
 ## 十五、用户体感示例
 
 ```
