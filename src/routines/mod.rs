@@ -92,10 +92,11 @@ pub struct RoutineExecution {
 /// 持有调度器和所有 Routine 配置，负责启动调度和执行任务。
 ///
 /// # 线程安全
-/// `RoutineEngine` 通过 `Arc<Mutex<>>` 在 tokio task 间共享。
+/// `RoutineEngine` 通过 `Arc<RoutineEngine>` 在 tokio task 间共享。
+/// `routines` 用 `std::sync::RwLock` 保护，支持 `&self` 方法动态增删（persist_* API）。
 /// 调度器回调（Job handler）是 `async move` 闭包，内部 clone Arc 引用。
 pub struct RoutineEngine {
-    routines: Vec<Routine>,
+    routines: std::sync::RwLock<Vec<Routine>>,
     scheduler: JobScheduler,
     config: Arc<Config>,
     memory: Arc<dyn Memory>,
@@ -130,7 +131,7 @@ impl RoutineEngine {
             .map_err(|e| eyre!("创建 JobScheduler 失败: {}", e))?;
 
         Ok(Self {
-            routines,
+            routines: std::sync::RwLock::new(routines),
             scheduler,
             config,
             memory,
@@ -197,6 +198,8 @@ impl RoutineEngine {
     pub async fn start(self: Arc<Self>) -> Result<()> {
         let enabled_routines: Vec<Routine> = self
             .routines
+            .read()
+            .unwrap()
             .iter()
             .filter(|r| r.enabled)
             .cloned()
@@ -247,10 +250,16 @@ impl RoutineEngine {
     pub async fn execute_routine(&self, name: &str) -> Result<String> {
         let routine = self
             .routines
+            .read()
+            .unwrap()
             .iter()
             .find(|r| r.name == name)
             .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?
             .clone();
+
+        if !routine.enabled {
+            return Ok(format!("Routine '{}' 已禁用，跳过执行。", name));
+        }
 
         const MAX_RETRIES: usize = 3;
         const RETRY_DELAY_SECS: u64 = 300; // 5 分钟
@@ -476,14 +485,14 @@ impl RoutineEngine {
 
     // ─── 动态管理 API（供 /routine 斜杠命令使用）───────────────────────────
 
-    /// 列出所有 Routine（包括 disabled）
-    pub fn list_routines(&self) -> &[Routine] {
-        &self.routines
+    /// 列出所有 Routine（包括 disabled），返回当前快照
+    pub fn list_routines(&self) -> Vec<Routine> {
+        self.routines.read().unwrap().clone()
     }
 
-    /// 查询单个 Routine
-    pub fn get_routine(&self, name: &str) -> Option<&Routine> {
-        self.routines.iter().find(|r| r.name == name)
+    /// 查询单个 Routine（返回 clone）
+    pub fn get_routine(&self, name: &str) -> Option<Routine> {
+        self.routines.read().unwrap().iter().find(|r| r.name == name).cloned()
     }
 
     /// 查询最近 N 条执行记录
@@ -517,7 +526,7 @@ impl RoutineEngine {
     /// 当前实现简化为：添加后提示用户重启 RRClaw 生效。
     pub async fn add_routine(&mut self, routine: Routine) -> Result<()> {
         // 检查名称是否重复
-        if self.routines.iter().any(|r| r.name == routine.name) {
+        if self.routines.read().unwrap().iter().any(|r| r.name == routine.name) {
             return Err(eyre!("Routine '{}' 已存在，请先删除再添加", routine.name));
         }
 
@@ -550,19 +559,22 @@ impl RoutineEngine {
             .map_err(|e| eyre!("保存 Routine 失败: {}", e))?;
         }
 
-        self.routines.push(routine);
+        self.routines.write().unwrap().push(routine);
         Ok(())
     }
 
     /// 删除 Routine（仅支持 Dynamic 来源，Config 来源需在 config.toml 中删除）
     pub async fn delete_routine(&mut self, name: &str) -> Result<()> {
-        let routine = self
-            .routines
-            .iter()
-            .find(|r| r.name == name)
-            .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?;
+        let source = {
+            let guard = self.routines.read().unwrap();
+            let routine = guard
+                .iter()
+                .find(|r| r.name == name)
+                .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?;
+            routine.source.clone()
+        };
 
-        if routine.source == RoutineSource::Config {
+        if source == RoutineSource::Config {
             return Err(eyre!(
                 "Routine '{}' 来自 config.toml，请直接编辑配置文件删除",
                 name
@@ -574,22 +586,24 @@ impl RoutineEngine {
             .map_err(|e| eyre!("删除 Routine 失败: {}", e))?;
         drop(db);
 
-        self.routines.retain(|r| r.name != name);
+        self.routines.write().unwrap().retain(|r| r.name != name);
         Ok(())
     }
 
     /// 启用 / 禁用 Routine
     pub async fn set_enabled(&mut self, name: &str, enabled: bool) -> Result<()> {
-        let routine = self
-            .routines
-            .iter_mut()
-            .find(|r| r.name == name)
-            .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?;
-
-        routine.enabled = enabled;
+        let source = {
+            let guard = self.routines.read().unwrap();
+            guard
+                .iter()
+                .find(|r| r.name == name)
+                .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?
+                .source
+                .clone()
+        };
 
         // 如果是 Dynamic 来源，持久化到 SQLite
-        if routine.source == RoutineSource::Dynamic {
+        if source == RoutineSource::Dynamic {
             let db = self.db.lock().await;
             db.execute(
                 "UPDATE routines SET enabled = ?1 WHERE name = ?2",
@@ -598,20 +612,30 @@ impl RoutineEngine {
             .map_err(|e| eyre!("更新 Routine 状态失败: {}", e))?;
         }
 
+        self.routines
+            .write()
+            .unwrap()
+            .iter_mut()
+            .filter(|r| r.name == name)
+            .for_each(|r| r.enabled = enabled);
+
         Ok(())
     }
 
-    // ─── 持久化 API（只写 SQLite，不修改内存中的 routines Vec）──────────────
+    // ─── 持久化 API（写 SQLite + 同步更新内存 Vec）─────────────────────────
     // 设计说明：
     // RoutineEngine 被包装在 Arc<RoutineEngine> 中，调度器回调也持有这个 Arc。
-    // 为了避免在 cron 回调（可能运行 5+ 分钟）期间阻塞可变借用，
-    // CRUD 操作只持久化到 SQLite，不修改内存状态。
-    // 变更在下次启动 RRClaw 时从 SQLite 加载后生效。
+    // routines 用 std::sync::RwLock 保护，&self 方法可安全修改内存状态。
+    // 注意：新添加的 Routine 需重启才会被调度器自动触发（热加载为 V2 功能）；
+    //       但 list/run/execute 立即可见新添加的 Routine，无需重启。
 
-    /// 持久化新增 Routine 到 SQLite（不更新内存中的 routines Vec，重启后生效）
+    /// 持久化新增 Routine 到 SQLite 并同步更新内存 Vec
     pub async fn persist_add_routine(&self, routine: &Routine) -> Result<()> {
-        if self.routines.iter().any(|r| r.name == routine.name) {
-            return Err(eyre!("Routine '{}' 已存在，请先删除再添加", routine.name));
+        // 重复检查（先持有 read lock，检查完立即释放）
+        {
+            if self.routines.read().unwrap().iter().any(|r| r.name == routine.name) {
+                return Err(eyre!("Routine '{}' 已存在，请先删除再添加", routine.name));
+            }
         }
         let field_count = routine.schedule.split_whitespace().count();
         if field_count != 5 {
@@ -620,55 +644,75 @@ impl RoutineEngine {
                 field_count
             ));
         }
-        let db = self.db.lock().await;
-        db.execute(
-            "INSERT OR REPLACE INTO routines \
-             (name, schedule, message, channel, enabled, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                routine.name,
-                routine.schedule,
-                routine.message,
-                routine.channel,
-                routine.enabled as i32,
-                chrono::Utc::now().to_rfc3339(),
-            ],
-        )
-        .map_err(|e| eyre!("保存 Routine 失败: {}", e))?;
+        // 写 DB（持有 Mutex，完成后立即释放）
+        {
+            let db = self.db.lock().await;
+            db.execute(
+                "INSERT OR REPLACE INTO routines \
+                 (name, schedule, message, channel, enabled, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    routine.name,
+                    routine.schedule,
+                    routine.message,
+                    routine.channel,
+                    routine.enabled as i32,
+                    chrono::Utc::now().to_rfc3339(),
+                ],
+            )
+            .map_err(|e| eyre!("保存 Routine 失败: {}", e))?;
+        }
+        // 同步更新内存 Vec（write lock，短暂持有）
+        self.routines.write().unwrap().push(routine.clone());
         Ok(())
     }
 
-    /// 从 SQLite 删除 Routine（不更新内存，重启后生效）
+    /// 从 SQLite 删除 Routine 并同步更新内存 Vec
     pub async fn persist_delete_routine(&self, name: &str) -> Result<()> {
-        let routine = self
-            .routines
-            .iter()
-            .find(|r| r.name == name)
-            .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?;
-        if routine.source == RoutineSource::Config {
-            return Err(eyre!(
-                "Routine '{}' 来自 config.toml，请直接编辑配置文件删除",
-                name
-            ));
+        {
+            let guard = self.routines.read().unwrap();
+            let routine = guard
+                .iter()
+                .find(|r| r.name == name)
+                .ok_or_else(|| eyre!("Routine '{}' 不存在", name))?;
+            if routine.source == RoutineSource::Config {
+                return Err(eyre!(
+                    "Routine '{}' 来自 config.toml，请直接编辑配置文件删除",
+                    name
+                ));
+            }
         }
-        let db = self.db.lock().await;
-        db.execute("DELETE FROM routines WHERE name = ?1", params![name])
-            .map_err(|e| eyre!("删除 Routine 失败: {}", e))?;
+        {
+            let db = self.db.lock().await;
+            db.execute("DELETE FROM routines WHERE name = ?1", params![name])
+                .map_err(|e| eyre!("删除 Routine 失败: {}", e))?;
+        }
+        // 同步从内存移除（调度器残留 job 下次触发时会得到"不存在"错误，无害）
+        self.routines.write().unwrap().retain(|r| r.name != name);
         Ok(())
     }
 
-    /// 在 SQLite 中更新 enabled 状态（不更新内存，重启后生效）
+    /// 在 SQLite 中更新 enabled 状态并同步更新内存 Vec
     pub async fn persist_set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
-        if !self.routines.iter().any(|r| r.name == name) {
-            return Err(eyre!("Routine '{}' 不存在", name));
+        {
+            if !self.routines.read().unwrap().iter().any(|r| r.name == name) {
+                return Err(eyre!("Routine '{}' 不存在", name));
+            }
         }
-        let db = self.db.lock().await;
-        db.execute(
-            "INSERT OR REPLACE INTO routines (name, schedule, message, channel, enabled, created_at) \
-             SELECT name, schedule, message, channel, ?1, created_at FROM routines WHERE name = ?2",
-            params![enabled as i32, name],
-        )
-        .map_err(|e| eyre!("更新 Routine 状态失败: {}", e))?;
+        {
+            let db = self.db.lock().await;
+            db.execute(
+                "UPDATE routines SET enabled = ?1 WHERE name = ?2",
+                params![enabled as i32, name],
+            )
+            .map_err(|e| eyre!("更新 Routine 状态失败: {}", e))?;
+        }
+        self.routines
+            .write()
+            .unwrap()
+            .iter_mut()
+            .filter(|r| r.name == name)
+            .for_each(|r| r.enabled = enabled);
         Ok(())
     }
 }

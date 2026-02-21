@@ -39,7 +39,7 @@ impl Tool for RoutineTool {
          - \"0 */2 * * *\"   每 2 小时\n\
          - \"0 9 * * 1\"     每周一早 9 点\n\
          - \"*/10 * * * *\"  每 10 分钟\n\
-         变更在重启后生效（动态热加载为 V2 功能）。"
+         创建/删除/启用/禁用立即对 list/run 生效；自动调度下次启动后生效（热加载为 V2 功能）。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -156,7 +156,7 @@ impl RoutineTool {
         match self.engine.persist_add_routine(&routine).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已创建定时任务 '{}'（schedule: {}），重启 RRClaw 后开始调度。", name, schedule),
+                output: format!("✓ 已创建定时任务 '{}'（schedule: {}）。list/run 立即可用；自动调度下次启动后生效。", name, schedule),
                 error: None,
                 ..Default::default()
             }),
@@ -210,7 +210,7 @@ impl RoutineTool {
         match self.engine.persist_delete_routine(name).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已删除定时任务 '{}'，重启 RRClaw 后生效。", name),
+                output: format!("✓ 已删除定时任务 '{}'。", name),
                 error: None,
                 ..Default::default()
             }),
@@ -240,7 +240,7 @@ impl RoutineTool {
         match self.engine.persist_set_enabled(name, enabled).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已{}定时任务 '{}'，重启 RRClaw 后生效。", action_zh, name),
+                output: format!("✓ 已{}定时任务 '{}'。", action_zh, name),
                 error: None,
                 ..Default::default()
             }),

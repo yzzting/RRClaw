@@ -1286,7 +1286,7 @@ async fn cmd_routine_add(engine: &Option<Arc<RoutineEngine>>, args: Option<&str>
     match engine {
         None => println!("Routine 系统未初始化"),
         Some(e) => match e.persist_add_routine(&routine).await {
-            Ok(()) => println!("✓ Routine '{}' 已保存，重启 RRClaw 后生效。", name),
+            Ok(()) => println!("✓ Routine '{}' 已创建。（自动调度需重启，/routine run 可立即手动触发）", name),
             Err(err) => println!("✗ 保存失败: {}", err),
         },
     }
@@ -1302,7 +1302,7 @@ async fn cmd_routine_delete(engine: &Option<Arc<RoutineEngine>>, name: Option<&s
     match engine {
         None => println!("Routine 系统未初始化"),
         Some(e) => match e.persist_delete_routine(name).await {
-            Ok(()) => println!("✓ Routine '{}' 已删除，重启 RRClaw 后生效。", name),
+            Ok(()) => println!("✓ Routine '{}' 已删除。", name),
             Err(err) => println!("✗ 删除失败: {}", err),
         },
     }
@@ -1320,7 +1320,7 @@ async fn cmd_routine_enable(engine: &Option<Arc<RoutineEngine>>, name: Option<&s
         Some(e) => {
             let action = if enabled { "启用" } else { "禁用" };
             match e.persist_set_enabled(name, enabled).await {
-                Ok(()) => println!("✓ Routine '{}' 已{}，重启 RRClaw 后生效。", name, action),
+                Ok(()) => println!("✓ Routine '{}' 已{}。", name, action),
                 Err(err) => println!("✗ 更新失败: {}", err),
             }
         }
