@@ -153,10 +153,10 @@ impl RoutineTool {
             source: crate::routines::RoutineSource::Dynamic,
         };
 
-        match self.engine.persist_add_routine(&routine).await {
+        match self.engine.clone().persist_add_routine(&routine).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已创建定时任务 '{}'（schedule: {}）。list/run 立即可用；自动调度下次启动后生效。", name, schedule),
+                output: format!("✓ 已创建定时任务 '{}'（schedule: {}）。list/run 立即可用。", name, schedule),
                 error: None,
                 ..Default::default()
             }),

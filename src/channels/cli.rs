@@ -1285,7 +1285,7 @@ async fn cmd_routine_add(engine: &Option<Arc<RoutineEngine>>, args: Option<&str>
     };
     match engine {
         None => println!("Routine 系统未初始化"),
-        Some(e) => match e.persist_add_routine(&routine).await {
+        Some(e) => match e.clone().persist_add_routine(&routine).await {
             Ok(()) => println!("✓ Routine '{}' 已创建。（自动调度需重启，/routine run 可立即手动触发）", name),
             Err(err) => println!("✗ 保存失败: {}", err),
         },

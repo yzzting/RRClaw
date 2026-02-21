@@ -195,6 +195,37 @@ impl RoutineEngine {
     ///
     /// 为每个 enabled Routine 注册 cron job，然后启动调度器。
     /// 调度器在后台 tokio task 中运行，不阻塞调用方。
+    /// 将单个 Routine 添加到调度器（供 persist_add_routine 调用）
+    async fn schedule_job(self: Arc<Self>, routine: &Routine) -> Result<()> {
+        if !routine.enabled {
+            return Ok(()); // 禁用的 routine 不调度
+        }
+
+        let engine = Arc::clone(&self);
+        let routine_name = routine.name.clone();
+        let routine_schedule = routine.schedule.clone();
+
+        let job = Job::new_async(routine_schedule.as_str(), move |_uuid, _lock| {
+            let engine = Arc::clone(&engine);
+            let name = routine_name.clone();
+            Box::pin(async move {
+                info!("Routine 触发: {}", name);
+                if let Err(e) = engine.execute_routine(&name).await {
+                    error!("Routine 执行失败: {} - {}", name, e);
+                }
+            })
+        })
+        .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
+
+        self.scheduler
+            .add(job)
+            .await
+            .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
+
+        info!("已调度 Routine: {} (schedule={})", routine.name, routine.schedule);
+        Ok(())
+    }
+
     pub async fn start(self: Arc<Self>) -> Result<()> {
         let enabled_routines: Vec<Routine> = self
             .routines
@@ -329,6 +360,7 @@ impl RoutineEngine {
         use crate::providers::{create_provider, ReliableProvider, RetryConfig};
         use crate::security::SecurityPolicy;
         use crate::tools::create_tools;
+        use std::sync::Arc;
 
         let provider_key = &self.config.default.provider;
         let provider_config = self
@@ -337,14 +369,20 @@ impl RoutineEngine {
             .get(provider_key)
             .ok_or_else(|| eyre!("Provider '{}' 未配置", provider_key))?;
 
-        let raw_provider = create_provider(provider_config);
         let retry_config = RetryConfig {
             max_retries: self.config.reliability.max_retries,
             initial_backoff_ms: self.config.reliability.initial_backoff_ms,
             ..Default::default()
         };
+
+        // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
+        let raw_provider_for_arc = create_provider(provider_config);
+        let provider_arc: Arc<dyn crate::providers::Provider> =
+            Arc::new(ReliableProvider::new(raw_provider_for_arc, retry_config.clone()));
+
+        // Box<dyn Provider> 用于 Agent（从 Arc 克隆一份）
         let provider: Box<dyn crate::providers::Provider> =
-            Box::new(ReliableProvider::new(raw_provider, retry_config));
+            Box::new(ReliableProvider::new(create_provider(provider_config), retry_config));
 
         let base_dirs = directories::BaseDirs::new()
             .ok_or_else(|| eyre!("无法获取 home 目录"))?;
@@ -365,6 +403,7 @@ impl RoutineEngine {
 
         let tools = create_tools(
             (*self.config).clone(),
+            provider_arc,
             data_dir.clone(),
             log_dir,
             config_path,
@@ -642,8 +681,8 @@ impl RoutineEngine {
     // 注意：新添加的 Routine 需重启才会被调度器自动触发（热加载为 V2 功能）；
     //       但 list/run/execute 立即可见新添加的 Routine，无需重启。
 
-    /// 持久化新增 Routine 到 SQLite 并同步更新内存 Vec
-    pub async fn persist_add_routine(&self, routine: &Routine) -> Result<()> {
+    /// 持久化新增 Routine 到 SQLite 并同步更新内存 Vec 和调度器
+    pub async fn persist_add_routine(self: Arc<Self>, routine: &Routine) -> Result<()> {
         // 重复检查（先持有 read lock，检查完立即释放）
         {
             if self.routines.read().unwrap().iter().any(|r| r.name == routine.name) {
@@ -677,6 +716,8 @@ impl RoutineEngine {
         }
         // 同步更新内存 Vec（write lock，短暂持有）
         self.routines.write().unwrap().push(routine.clone());
+        // 添加到调度器（立即生效，无需重启）
+        self.schedule_job(routine).await?;
         Ok(())
     }
 
