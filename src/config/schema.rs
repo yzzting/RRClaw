@@ -21,6 +21,8 @@ pub struct Config {
     pub reliability: ReliabilityConfig,
     #[serde(default)]
     pub mcp: Option<McpConfig>,
+    #[serde(default)]
+    pub routines: RoutinesConfig,
 }
 
 /// Telegram Bot 配置
@@ -114,6 +116,34 @@ pub struct McpConfig {
     /// key = server 名称（用于 tool 前缀）
     #[serde(default)]
     pub servers: HashMap<String, McpServerConfig>,
+}
+
+/// 定时任务配置
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RoutinesConfig {
+    /// 静态任务列表（从 config.toml 读取）
+    #[serde(default)]
+    pub jobs: Vec<RoutineJobConfig>,
+}
+
+/// 单个静态 Routine 的配置项（映射到 Routine struct）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineJobConfig {
+    pub name: String,
+    pub schedule: String,
+    pub message: String,
+    #[serde(default = "default_routine_channel")]
+    pub channel: String,
+    #[serde(default = "default_routine_enabled")]
+    pub enabled: bool,
+}
+
+fn default_routine_channel() -> String {
+    "cli".to_string()
+}
+
+fn default_routine_enabled() -> bool {
+    true
 }
 
 /// 单个 MCP Server 配置

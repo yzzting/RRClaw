@@ -1,7 +1,7 @@
 use color_eyre::eyre::{Context, Result};
 use dialoguer::{Input, Password, Select};
 
-use super::schema::{Config, DefaultConfig, MemoryConfig, ProviderConfig, ReliabilityConfig, SecurityConfig};
+use super::schema::{Config, DefaultConfig, MemoryConfig, ProviderConfig, ReliabilityConfig, RoutinesConfig, SecurityConfig};
 use crate::security::AutonomyLevel;
 
 /// 已知 Provider 信息（名称、默认 base_url、已知模型列表、认证方式）
@@ -133,6 +133,7 @@ pub fn run_setup() -> Result<()> {
         telegram: None,
         reliability: ReliabilityConfig::default(),
         mcp: None,
+        routines: RoutinesConfig::default(),
     };
 
     // 写入配置文件

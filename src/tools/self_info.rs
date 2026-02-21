@@ -232,7 +232,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::config::{DefaultConfig, MemoryConfig, ProviderConfig, SecurityConfig};
+    use crate::config::{DefaultConfig, MemoryConfig, ProviderConfig, RoutinesConfig, SecurityConfig};
 
     fn test_config() -> Config {
         let mut providers = HashMap::new();
@@ -257,6 +257,7 @@ mod tests {
             telegram: None,
             reliability: crate::config::ReliabilityConfig::default(),
             mcp: None,
+            routines: RoutinesConfig::default(),
         }
     }
 
