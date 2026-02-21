@@ -870,7 +870,9 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
                 eyre!("无效的分钟数")
             })?;
             if minutes > 0 && minutes <= 59 {
-                return Ok(format!("*/{} * * * *", minutes));
+                // 生成显式的分钟列表（有些 cron 实现不支持 */n 语法）
+                let mut mins: Vec<u32> = (0..60).step_by(minutes as usize).collect();
+                return Ok(format!("{} * * * *", mins.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",")));
             }
         }
     }
@@ -882,7 +884,9 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
                 eyre!("无效的小时数")
             })?;
             if hours > 0 && hours <= 24 {
-                return Ok(format!("0 */{} * * *", hours));
+                // 生成显式的小时列表
+                let mut hrs: Vec<u32> = (0..24).step_by(hours as usize).collect();
+                return Ok(format!("0 {} * * *", hrs.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",")));
             }
         }
     }
@@ -1110,13 +1114,15 @@ mod tests {
     #[test]
     fn parse_every_2_hours() {
         let cron = parse_schedule_to_cron("每2小时").unwrap();
-        assert_eq!(cron, "0 */2 * * *");
+        // 每2小时: 0,2,4,6,8,10,12,14,16,18,20,22
+        assert_eq!(cron, "0 0,2,4,6,8,10,12,14,16,18,20,22 * * *");
     }
 
     #[test]
     fn parse_every_5_minutes() {
         let cron = parse_schedule_to_cron("每5分钟").unwrap();
-        assert_eq!(cron, "*/5 * * * *");
+        // 每5分钟: 0,5,10,15,20,25,30,35,40,45,50,55
+        assert_eq!(cron, "0,5,10,15,20,25,30,35,40,45,50,55 * * * *");
     }
 
     #[test]
