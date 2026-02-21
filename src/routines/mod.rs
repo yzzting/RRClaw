@@ -377,10 +377,21 @@ impl RoutineEngine {
         let model = self.config.default.model.clone();
         let temperature = self.config.default.temperature;
 
+        // ★ Step 0: 从共享 Memory 召回上次成功的方法描述
+        let memory_key = format!("routine:{}:approach", routine.name);
+        let recalled = self.memory
+            .recall(&memory_key, 1)
+            .await
+            .unwrap_or_default();
+
+        // ★ Step 1: 构造增强版 message（有历史方法时注入前缀）
+        let enhanced_message = build_enhanced_message(&recalled, &routine.message);
+
+        // ★ Step 2: 传入共享 Memory（LLM 可通过 memory_store 保存有效方法）
         let mut agent = Agent::new(
             provider,
             tools,
-            Box::new(crate::memory::NoopMemory), // Routine 不写新记忆，避免污染主记忆
+            Box::new(Arc::clone(&self.memory)), // 共享 Memory，读写均生效
             policy,
             provider_name,
             provider_config.base_url.clone(),
@@ -392,8 +403,10 @@ impl RoutineEngine {
 
         // Routine 在 Full 模式下执行（不需要用户逐一确认，无交互界面）
         agent.set_autonomy(crate::security::AutonomyLevel::Full);
+        // 注入 Routine 专属 system prompt 段
+        agent.set_routine_name(routine.name.clone());
 
-        let output = agent.process_message(&routine.message).await?;
+        let output = agent.process_message(&enhanced_message).await?;
         Ok(output)
     }
 
@@ -721,6 +734,24 @@ impl RoutineEngine {
 // ─── 自然语言时间解析 ───────────────────────────────────────────────────────
 
 use regex::Regex;
+
+/// 根据 Memory recall 结果构造增强版 message
+///
+/// 若召回到上次成功方法，注入 `[历史成功方法参考]` 前缀供 LLM 优先参考。
+/// 未找到历史记录时返回原始 message，行为与之前一致。
+pub(crate) fn build_enhanced_message(
+    recalled: &[crate::memory::MemoryEntry],
+    message: &str,
+) -> String {
+    if let Some(entry) = recalled.first() {
+        format!(
+            "[历史成功方法参考]\n{}\n\n---\n{}",
+            entry.content, message
+        )
+    } else {
+        message.to_string()
+    }
+}
 
 /// 将自然语言时间描述或 cron 表达式转换为标准 5 字段 cron 表达式
 ///
@@ -1069,5 +1100,44 @@ mod tests {
     fn parse_invalid_returns_error() {
         let result = parse_schedule_to_cron("随便输入");
         assert!(result.is_err());
+    }
+
+    // --- build_enhanced_message 测试 ---
+
+    fn make_memory_entry(content: &str) -> crate::memory::MemoryEntry {
+        crate::memory::MemoryEntry {
+            key: "routine:test:approach".to_string(),
+            content: content.to_string(),
+            category: crate::memory::MemoryCategory::Custom("routine".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            relevance_score: 1.0,
+        }
+    }
+
+    #[test]
+    fn enhanced_message_with_recalled_entry_injects_prefix() {
+        let entry = make_memory_entry("GET https://api.example.com/price, headers: User-Agent: Mozilla");
+        let recalled = vec![entry];
+        let msg = build_enhanced_message(&recalled, "查询股价");
+        assert!(msg.starts_with("[历史成功方法参考]"), "应以历史参考前缀开头");
+        assert!(msg.contains("GET https://api.example.com/price"), "应包含历史方法内容");
+        assert!(msg.contains("查询股价"), "应包含原始任务消息");
+    }
+
+    #[test]
+    fn enhanced_message_without_recalled_returns_original() {
+        let msg = build_enhanced_message(&[], "查询股价");
+        assert_eq!(msg, "查询股价", "无召回时应原样返回任务消息");
+    }
+
+    #[test]
+    fn enhanced_message_uses_only_first_recalled_entry() {
+        let entry1 = make_memory_entry("方法一");
+        let entry2 = make_memory_entry("方法二");
+        let recalled = vec![entry1, entry2];
+        let msg = build_enhanced_message(&recalled, "任务");
+        assert!(msg.contains("方法一"), "应包含第一条记录");
+        assert!(!msg.contains("方法二"), "不应包含第二条记录");
     }
 }
