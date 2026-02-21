@@ -1494,7 +1494,6 @@ model = "deepseek-chat"
 
     #[test]
     fn extract_field_trims_whitespace() {
-        let content = "-  回复风格：  简洁直接  \n";
         // 行首 trim 处理：行本身有多余空格
         let content2 = "- 回复风格： 简洁直接 \n";
         assert_eq!(extract_field(content2, "回复风格"), "简洁直接");
