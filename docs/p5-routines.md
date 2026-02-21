@@ -995,26 +995,104 @@ match RoutineEngine::new(
 
 ---
 
-## 八、CLI 斜杠命令（/routine）
+## 八、自然语言意图识别
 
-在 `src/channels/cli.rs` 中，仿照现有 `/skill` 命令的模式，新增 `/routine` 命令解析：
+用户可以直接用自然语言描述需求，系统自动识别意图并解析出时间调度和任务内容。
 
-### 8.1 CliChannel 结构体新增字段
+### 8.1 设计思路
+
+不额外增加命令语法，用户像平时一样说话即可：
+- 用户：`"每天早上8点帮我生成日报"` → 识别为创建 Routine
+- 用户：`"每小时检查一下系统状态"` → 识别为创建 Routine
+- 用户：`"取消每天早上的日报任务"` → 识别为删除 Routine
+- 用户：`"现在执行一次日报"` → 识别为手动触发 Routine
+
+### 8.2 意图识别 + 实体提取
+
+在 `handle_slash_command` 之后，增加一层自然语言意图识别：
 
 ```rust
-pub struct CliChannel {
-    // ... 已有字段 ...
-    routine_engine: Option<Arc<RoutineEngine>>,  // ← 新增
-}
+/// 分析用户输入，识别是否为 Routine 相关意图
+fn detect_routine_intent(input: &str) -> Option<RoutineIntent> {
+    let input = input.trim().to_lowercase();
 
-impl CliChannel {
-    pub fn set_routine_engine(&mut self, engine: Arc<RoutineEngine>) {
-        self.routine_engine = Some(engine);
+    // 创建Routine的意图模式
+    let create_patterns = [
+        "每天", "每日", "每周", "每月", "每小时", "每", "定时", "定期",
+    ];
+    let has_time_keyword = create_patterns.iter().any(|p| input.contains(p));
+    let has_action_keyword = input.contains("生成") || input.contains("检查")
+        || input.contains("提醒") || input.contains("汇总") || input.contains("报告");
+
+    if has_time_keyword && has_action_keyword {
+        // 提取任务名称（从动词短语）
+        let action = input.split(|c: char| c == '每' || c == '点' || c == '天' || c == '月' || c == '年')
+            .find(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "自动任务".to_string());
+
+        // 提取时间描述和任务消息
+        return Some(RoutineIntent::Create {
+            name: generate_name_from_action(&action),
+            schedule_desc: extract_time_description(&input),
+            message: extract_task_message(&input),
+        });
     }
+
+    // 删除意图
+    if input.contains("取消") || input.contains("删除") || input.contains("停止") {
+        if let Some(name) = extract_routine_name(&input) {
+            return Some(RoutineIntent::Delete { name });
+        }
+    }
+
+    // 手动触发意图
+    if input.contains("现在") || input.contains("立即") || input.contains("执行一次") {
+        if let Some(name) = extract_routine_name(&input) {
+            return Some(RoutineIntent::Run { name });
+        }
+    }
+
+    None
 }
 ```
 
-### 8.2 命令解析
+### 8.3 用户体验
+
+```
+> 每天早上8点帮我生成日报
+→ [Routine 系统] 已识别意图：创建定时任务
+✓ 已解析: "每天早上8点" → 0 8 * * *
+✓ 已创建任务: daily_brief（每天早8点执行）
+
+> 每小时检查一下系统状态
+→ [Routine 系统] 已识别意图：创建定时任务
+✓ 已解析: "每小时" → 0 * * * *
+✓ 已创建任务: hourly_check（每小时执行）
+
+> 取消每天早上的日报任务
+→ [Routine 系统] 已识别意图：删除定时任务
+✓ 已删除任务: daily_brief
+
+> 现在执行一次日报
+→ [Routine 系统] 已识别意图：手动触发
+正在手动触发 Routine: daily_brief...
+```
+
+### 8.4 实现位置
+
+在 `cli.rs` 的 REPL 循环中，用户输入不以 `/` 开头时：
+
+```rust
+// 在 stream_message 调用之前
+if let Some(intent) = detect_routine_intent(input) {
+    handle_routine_intent(intent, &routine_engine).await;
+    continue;
+}
+
+// 正常 AI 对话处理
+stream_message(agent, input).await
+```
 
 在 `handle_slash_command()` 函数中新增 `routine` 分支：
 
@@ -1058,8 +1136,8 @@ fn handle_routine_list(engine: &Option<Arc<RoutineEngine>>) {
 ```
 
 ```rust
-// /routine add <name> "<cron>" "<message>" [channel]
-// 示例：/routine add daily_brief "0 8 * * *" "生成日报" cli
+// /routine add <name> "<自然语言描述>" "<消息>" [channel]
+// 示例：/routine add daily_brief "每天早上8点" "生成今日日报" cli
 async fn handle_routine_add(
     engine: &mut Option<Arc<RoutineEngine>>,
     args: &str,
@@ -1073,15 +1151,40 @@ async fn handle_routine_add(
         }
     };
     if parts.len() < 3 {
-        println!("用法: /routine add <name> <cron表达式> <消息> [channel=cli|telegram]");
-        println!("示例: /routine add daily_brief \"0 8 * * *\" \"生成今日日报\" cli");
+        println!("用法: /routine add <名称> <执行时间> <消息> [channel]");
+        println!("示例: /routine add daily_brief \"每天早上8点\" \"生成今日日报\" cli");
+        println!("       /routine add hourly_check \"每小时\" \"检查系统状态\"");
+        println!("       /routine add weekly_report \"每周一早上9点\" \"生成周报\" telegram");
+        println!();
+        println!("支持的自然语言模式：");
+        println!("  - 每天/每日: \"每天早上8点\", \"每天下午6点\"");
+        println!("  - 每周: \"每周一早上9点\", \"每周五下午5点\"");
+        println!("  - 每月: \"每月1日凌晨0点\", \"每月15号下午2点\"");
+        println!("  - 每小时: \"每小时\", \"每2小时\"");
         return;
     }
+
+    let name = parts[0].clone();
+    let schedule_desc = parts[1].clone();
+    let message = parts[2].clone();
+    let channel = parts.get(3).cloned().unwrap_or_else(|| "cli".to_string());
+
+    // 调用 LLM 将自然语言转换为 cron 表达式
+    let schedule = match parse_schedule_to_cron(&schedule_desc).await {
+        Ok(cron) => cron,
+        Err(e) => {
+            println!("时间描述解析失败: {}", e);
+            return;
+        }
+    };
+
+    println!("✓ 已解析: \"{}\" → {}", schedule_desc, schedule);
+
     let routine = Routine {
-        name: parts[0].clone(),
-        schedule: parts[1].clone(),
-        message: parts[2].clone(),
-        channel: parts.get(3).cloned().unwrap_or_else(|| "cli".to_string()),
+        name,
+        schedule,
+        message,
+        channel,
         enabled: true,
         source: RoutineSource::Dynamic,
     };
@@ -1099,21 +1202,138 @@ async fn handle_routine_add(
 
 ---
 
-## 九、改动范围汇总
+## 九、自然语言时间解析（LLM 驱动）
 
-| 文件 | 改动类型 | 说明 |
-|------|---------|------|
-| `Cargo.toml` | 新增依赖 | `tokio-cron-scheduler = "0.13"` |
-| `src/routines/mod.rs` | **新增文件** | RoutineEngine 完整实现（~350 行） |
-| `src/lib.rs` | 微改 | `pub mod routines;` |
-| `src/config/schema.rs` | 小改 | 新增 `RoutinesConfig` + `RoutineJobConfig` + `Config.routines` 字段 |
-| `src/channels/cli.rs` | 中等改动 | 新增 `/routine` 命令处理 + `routine_engine` 字段 |
-| `src/main.rs` | 小改 | 初始化 RoutineEngine + 传入 CLI channel |
-| `src/memory/mod.rs` | 微改 | 导出 `NoopMemory`（或将 NoopMemory 定义在 routines 模块内） |
+### 9.1 设计思路
+
+用户输入自然语言时间描述（如"每天早上8点"），调用 LLM 转换为标准 cron 表达式。
+
+### 9.2 实现方案
+
+在 `src/routines/mod.rs` 中新增：
+
+```rust
+/// 将自然语言时间描述转换为 cron 表达式
+///
+/// 使用 LLM 进行转换，避免让用户记忆 cron 语法。
+/// 支持的中文模式：
+///   - 每天早上/下午/晚上 X 点 → "0 X * * *"
+///   - 每周X早上/下午/晚上 X 点 → "0 X * * W"
+///   - 每月X号 X 点 → "0 X X * *"
+///   - 每小时 → "0 * * * *"
+///   - 每X小时 → "0 */X * * *"
+pub async fn parse_schedule_to_cron(desc: &str) -> Result<String> {
+    let prompt = format!(
+        r#"将下面的中文时间描述转换为标准 5 字段 cron 表达式（分 时 日 月 周）。
+
+要求：
+1. 只返回 cron 表达式，不要任何解释
+2. 分、时用具体数字替换，* 表示任意
+3. 周一=1，周日=0 或 7
+
+时间描述：{}
+
+示例：
+- "每天早上8点" → "0 8 * * *"
+- "每小时" → "0 * * * *"
+- "每周一早上9点" → "0 9 * * 1"#,
+        desc
+    );
+
+    // 调用 LLM（复用已配置的 provider）
+    // 返回 cron 表达式
+}
+```
+
+### 9.3 简化实现（第一版）
+
+为了快速上线，第一版可以使用简单的规则匹配 + LLM 回退：
+
+```rust
+/// 快速解析常见模式，复杂情况调用 LLM
+fn quick_parse_schedule(desc: &str) -> Option<String> {
+    let desc = desc.trim();
+
+    // 每天早上 X 点
+    if let Some(m) = regex::Regex::new(r"每天早上(\d{1,2})点?").unwrap().captures(desc) {
+        let hour: u32 = m.get(1)?.as_str().parse().ok()?;
+        if hour < 24 { return Some(format!("0 {} * * *", hour)); }
+    }
+
+    // 每天下午 X 点 (12-23)
+    if let Some(m) = regex::Regex::new(r"每天下午(\d{1,2})点?").unwrap().captures(desc) {
+        let hour: u32 = m.get(1)?.as_str().parse().ok()?;
+        let hour = hour + 12;
+        if hour < 24 { return Some(format!("0 {} * * *", hour)); }
+    }
+
+    // 每小时
+    if desc == "每小时" || desc == "每小时整点" {
+        return Some("0 * * * *".to_string());
+    }
+
+    // 每 X 小时
+    if let Some(m) = regex::Regex::new(r"每(\d+)小时").unwrap().captures(desc) {
+        let hours: u32 = m.get(1)?.as_str().parse().ok()?;
+        if hours > 0 && hours <= 24 { return Some(format!("0 */{} * * *", hours)); }
+    }
+
+    // 每周 X 早上/下午
+    let week_patterns = [
+        ("周一", 1), ("周二", 2), ("周三", 3), ("周四", 4),
+        ("周五", 5), ("周六", 6), ("周日", 7),
+    ];
+    for (day_name, day_num) in week_patterns {
+        let pattern = format!(r"每周{}早上(\d{{1,2}})点?", day_name);
+        if let Some(m) = regex::Regex::new(&pattern).ok()?.captures(desc) {
+            let hour: u32 = m.get(1)?.as_str().parse().ok()?;
+            if hour < 24 { return Some(format!("0 {} * * {}", hour, day_num)); }
+        }
+    }
+
+    // 每月 X 号
+    if let Some(m) = regex::Regex::new(r"每月(\d{1,2})号?\s*(?:早上|下午|晚上)?(\d{1,2})点?").unwrap().captures(desc) {
+        let day: u32 = m.get(1)?.as_str().parse().ok()?;
+        let hour = m.get(2).and_then(|h| h.as_str().parse().ok()).unwrap_or(0);
+        if day <= 31 && hour < 24 { return Some(format!("0 {} {} * *", hour, day)); }
+    }
+
+    None // 无法快速解析，返回 None 供 LLM 回退
+}
+```
+
+### 9.4 Prompt 示例
+
+```
+用户输入: "每天早上8点"
+LLM 输出: "0 8 * * *"
+
+用户输入: "每周一早上9点"
+LLM 输出: "0 9 * * 1"
+
+用户输入: "每月15号下午3点"
+LLM 输出: "0 15 15 * *"
+
+用户输入: "每2小时"
+LLM 输出: "0 */2 * * *"
+```
 
 ---
 
-## 十、提交策略
+## 十、改动范围汇总
+
+| 文件 | 改动类型 | 说明 |
+|------|---------|------|
+| `Cargo.toml` | 新增依赖 | `tokio-cron-scheduler = "0.13"`, `regex = "1"` |
+| `src/routines/mod.rs` | **新增文件** | RoutineEngine 完整实现 + `parse_schedule_to_cron()` + 自然语言解析 |
+| `src/lib.rs` | 微改 | `pub mod routines;` |
+| `src/config/schema.rs` | 小改 | 新增 `RoutinesConfig` + `RoutineJobConfig` + `Config.routines` 字段 |
+| `src/channels/cli.rs` | 中等改动 | 自然语言意图识别 + `/routine` 命令兜底 + `routine_engine` 字段 |
+| `src/main.rs` | 小改 | 初始化 RoutineEngine + 传入 CLI channel |
+
+---
+
+## 十二、提交策略
 
 | # | 提交 message | 内容 |
 |---|-------------|------|
@@ -1128,7 +1348,7 @@ async fn handle_routine_add(
 
 ---
 
-## 十一、测试执行方式
+## 十三、测试执行方式
 
 ```bash
 # 运行 Routines 单元测试
@@ -1143,13 +1363,14 @@ cargo clippy -p rrclaw -- -D warnings
 # 手动测试（启动后执行命令）
 cargo run -- agent
 > /routine list
-> /routine add test_job "* * * * *" "执行测试任务"   # 每分钟触发
+> /routine add test_job "每分钟" "执行测试任务"   # 自然语言，LLM 解析
+> /routine add daily_brief "每天早上8点" "生成今日日报"
 # 等待约 1 分钟，观察控制台输出
 ```
 
 ---
 
-## 十二、关键注意事项
+## 十四、关键注意事项
 
 ### 12.1 新 Agent 实例不共享历史上下文
 
@@ -1203,7 +1424,7 @@ Routine 触发时，用户可能正在 REPL 中输入命令。使用 `eprintln!`
 
 ---
 
-## 十三、用户体感示例
+## 十五、用户体感示例
 
 ```
 $ rrclaw agent
@@ -1214,6 +1435,12 @@ $ rrclaw agent
 名称                 调度            状态     通道       消息（前 40 字）
 --------------------------------------------------------------------------------
 morning_brief        0 8 * * 1-5     ✓ 启用  cli        生成今日工作简报，包括待办事项提醒
+
+> /routine add hourly_check "每小时" "检查系统状态"
+✓ 已解析: "每小时" → 0 * * * *
+
+> /routine add weekly_report "每周一早上9点" "生成周报"
+✓ 已解析: "每周一早上9点" → 0 9 * * 1
 
 > /routine run morning_brief
 正在手动触发 Routine: morning_brief...
