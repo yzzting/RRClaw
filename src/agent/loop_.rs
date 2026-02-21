@@ -572,8 +572,9 @@ impl Agent {
 
         match route_result {
             RouteResult::NeedClarification(question) => {
-                // 直接返回澄清问题字符串，不写入 history，不执行任何工具
-                // CLI/Telegram 层收到后直接展示给用户
+                // 通过 tx 发送澄清问题，不写入 history，不执行任何工具
+                // 必须走 tx 发送，否则 stream_message 里 Ok(_) 会丢弃返回值
+                let _ = tx.send(StreamEvent::Text(question.clone())).await;
                 return Ok(question);
             }
             RouteResult::Skills(skill_names) => {
