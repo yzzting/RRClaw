@@ -98,9 +98,69 @@
 
 ---
 
-## 四、实现细节
+## 四、配置项
 
-### 4.1 HTML Strip
+### 4.0 `SecurityConfig` 新增字段
+
+阈值放在 `[security]` 段（与 `http_allowed_hosts` 同组，都是 HTTP 行为策略）：
+
+**`src/config/schema.rs`**：
+
+```rust
+pub struct SecurityConfig {
+    pub autonomy: AutonomyLevel,
+    pub allowed_commands: Vec<String>,
+    pub workspace_only: bool,
+    pub http_allowed_hosts: Vec<String>,
+    pub injection_check: bool,
+    /// HTML 响应 strip 后的最大字节数（KB），超出则触发 mini-LLM 提取或截断
+    /// 默认 200（KB）；设为 0 禁用 strip（直接走原始 1MB 截断，旧行为）
+    #[serde(default = "default_http_strip_threshold_kb")]
+    pub http_strip_threshold_kb: usize,
+}
+
+fn default_http_strip_threshold_kb() -> usize {
+    200
+}
+```
+
+**`config.toml` 示例**：
+
+```toml
+[security]
+autonomy = "supervised"
+allowed_commands = ["ls", "cat", "grep", "git", "cargo"]
+workspace_only = true
+http_allowed_hosts = []
+injection_check = true
+http_strip_threshold_kb = 200   # HTML strip 后阈值，默认 200KB；0 = 禁用 strip
+```
+
+**`HttpRequestTool` 构造时注入**（在 `create_tools()` 里，已有 `app_config: Config`）：
+
+```rust
+Box::new(HttpRequestTool::new(
+    Some(Arc::clone(&provider)),
+    app_config.default.model.clone(),
+    app_config.security.http_strip_threshold_kb * 1024,  // KB → bytes
+)),
+```
+
+**`HttpRequestTool` struct**：
+
+```rust
+pub struct HttpRequestTool {
+    provider: Option<Arc<dyn crate::providers::Provider>>,
+    model: String,
+    strip_threshold_bytes: usize,   // 0 = 禁用 strip
+}
+```
+
+---
+
+## 五、实现细节
+
+### 5.1 HTML Strip
 
 新增依赖（`Cargo.toml`）：
 
@@ -129,12 +189,14 @@ let (processed_body, was_stripped) = if is_html && body_str.len() > 0 {
 };
 ```
 
-### 4.2 大小判断与路由
+### 5.2 大小判断与路由
 
 ```rust
-const HTML_STRIP_MAX_BYTES: usize = 200 * 1024;  // 200KB（strip 后）
+// self.strip_threshold_bytes 来自 config.security.http_strip_threshold_kb * 1024
+// 0 表示禁用 strip（skip_strip = true）
+let skip_strip = self.strip_threshold_bytes == 0;
 
-if was_stripped && processed_body.len() > HTML_STRIP_MAX_BYTES {
+if was_stripped && !skip_strip && processed_body.len() > self.strip_threshold_bytes {
     let extract_hint = args.get("extract").and_then(|v| v.as_str());
 
     match extract_hint {
@@ -160,7 +222,7 @@ if was_stripped && processed_body.len() > HTML_STRIP_MAX_BYTES {
 }
 ```
 
-### 4.3 mini-LLM 提取（B 阶段）
+### 5.3 mini-LLM 提取（B 阶段）
 
 **架构注意**：`HttpRequestTool` 当前是无状态 `struct`，需要注入 Provider 才能发起 LLM 调用。
 
@@ -248,9 +310,10 @@ async fn mini_extract(
 | 文件 | 改动内容 | 估计行数 |
 |------|---------|---------|
 | `Cargo.toml` | 新增 `html2text = "0.12"` | +1 |
-| `src/tools/http.rs` | HttpRequestTool 有状态化；execute() 加 strip + 路由；新增 mini_extract() | +80 |
-| `src/tools/mod.rs` | create_tools() 新增 provider 参数；HttpRequestTool::new() 传 provider | +5 |
-| `src/main.rs` | 调用 create_tools() 时传入 provider（main.rs 已有 provider，直接 Arc::clone）| +2 |
+| `src/config/schema.rs` | `SecurityConfig` 新增 `http_strip_threshold_kb` 字段 + default fn | +6 |
+| `src/tools/http.rs` | HttpRequestTool 有状态化（provider + model + strip_threshold_bytes）；execute() 加 strip + 路由；新增 mini_extract() | +85 |
+| `src/tools/mod.rs` | create_tools() 新增 provider 参数；HttpRequestTool::new() 传 provider + threshold | +6 |
+| `src/main.rs` | 调用 create_tools() 时传入 provider（Arc::clone）| +2 |
 | `src/routines/mod.rs` | run_once() 内的 create_tools() 调用同步更新 | +2 |
 
 > channels/telegram.rs 等其他 create_tools() 调用处同步更新，每处 +1 行。
@@ -298,11 +361,12 @@ fn json_content_type_skips_strip() { ... }
 | # | commit message | 内容 |
 |---|---------------|------|
 | 1 | `docs: add p6 http smart response design` | 本文件 |
-| 2 | `feat: add html2text dependency` | Cargo.toml |
-| 3 | `feat: make HttpRequestTool stateful with provider injection` | http.rs + mod.rs + main.rs + telegram.rs + routines/mod.rs |
-| 4 | `feat: add html strip for text/html responses in http_request` | http.rs A 阶段 |
-| 5 | `feat: add mini-LLM extraction for large html responses` | http.rs B 阶段（mini_extract） |
-| 6 | `test: add html strip and response routing tests` | http.rs 测试 |
+| 2 | `feat: add http_strip_threshold_kb to SecurityConfig` | schema.rs（配置项 + default） |
+| 3 | `feat: add html2text dependency` | Cargo.toml |
+| 4 | `feat: make HttpRequestTool stateful with provider and threshold injection` | http.rs + mod.rs + main.rs + telegram.rs + routines/mod.rs |
+| 5 | `feat: add html strip for text/html responses in http_request` | http.rs A 阶段 |
+| 6 | `feat: add mini-LLM extraction for large html responses` | http.rs B 阶段（mini_extract） |
+| 7 | `test: add html strip and response routing tests` | http.rs 测试 |
 
 ---
 
