@@ -198,18 +198,31 @@ impl Agent {
     async fn route(&self, user_message: &str) -> Result<RouteResult> {
         let routing_prompt = build_routing_prompt(&self.skills_meta);
 
-        let messages = vec![
-            ConversationMessage::Chat(ChatMessage {
-                role: "system".to_string(),
-                content: routing_prompt,
-                reasoning_content: None,
-            }),
-            ConversationMessage::Chat(ChatMessage {
-                role: "user".to_string(),
-                content: user_message.to_string(),
-                reasoning_content: None,
-            }),
-        ];
+        // 取最近 2 条纯文本历史（跳过 ToolCalls/ToolResults），
+        // 让路由 LLM 理解对话上下文，避免对"方案B"/"继续"等短消息误判为 NeedClarification
+        let recent_context: Vec<ConversationMessage> = self
+            .history
+            .iter()
+            .rev()
+            .filter(|m| matches!(m, ConversationMessage::Chat(_)))
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+
+        let mut messages = vec![ConversationMessage::Chat(ChatMessage {
+            role: "system".to_string(),
+            content: routing_prompt,
+            reasoning_content: None,
+        })];
+        messages.extend(recent_context);
+        messages.push(ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            reasoning_content: None,
+        }));
 
         // Phase 1 不传工具，温度极低保证输出稳定
         let response = self
