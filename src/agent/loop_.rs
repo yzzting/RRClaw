@@ -150,6 +150,8 @@ pub struct Agent {
     identity_context: Option<String>,
     /// 当前执行的 Routine 名称（None 表示普通对话模式）
     routine_name: Option<String>,
+    /// P7-3: 本轮已处理参数缺失并注入完整 schema 的工具名集合（每轮重置）
+    expanded_tools: std::collections::HashSet<String>,
 }
 
 impl Agent {
@@ -182,6 +184,7 @@ impl Agent {
             routed_tool_names: Vec::new(),
             identity_context,
             routine_name: None,
+            expanded_tools: std::collections::HashSet::new(),
         }
     }
 
@@ -456,7 +459,10 @@ impl Agent {
         }));
 
         // 4. Tool call 循环（工具 spec 由 build_tool_specs 统一管理）
-        let tool_specs = self.build_tool_specs(user_msg);
+        // P7-3: tool_specs 可变，允许在循环内按需升级工具 schema
+        let mut tool_specs = self.build_tool_specs(user_msg);
+        // P7-3: 每轮重置已扩展集合
+        self.expanded_tools.clear();
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -518,6 +524,45 @@ impl Agent {
                         continue;
                     }
                 }
+
+                // ─── P7-3: 动态 Schema 补充 ──────────────────────────────────────────
+                // 检测必填参数缺失（每轮每个工具只触发一次，避免死循环）
+                if !self.expanded_tools.contains(&tc.name) {
+                    let missing = {
+                        self.tools
+                            .iter()
+                            .find(|t| t.name() == tc.name)
+                            .map(|t| find_missing_required_params(&t.parameters_schema(), &tc.arguments))
+                            .unwrap_or_default()
+                    };
+                    if !missing.is_empty() {
+                        self.expanded_tools.insert(tc.name.clone());
+                        // 升级 MCP 工具为 L2 完整 schema（对内置工具无副作用）
+                        if let Some(tool) = self.tools.iter_mut().find(|t| t.name() == tc.name) {
+                            tool.load_full_schema();
+                        }
+                        // 更新 tool_specs 供下一迭代使用
+                        if let Some(tool) = self.tools.iter().find(|t| t.name() == tc.name) {
+                            let new_spec = tool.spec();
+                            if let Some(spec) = tool_specs.iter_mut().find(|s| s.name == tc.name) {
+                                *spec = new_spec;
+                            } else {
+                                tool_specs.push(new_spec);
+                            }
+                        }
+                        debug!("P7-3: 工具 '{}' 缺少参数 {:?}，已注入完整 schema", tc.name, missing);
+                        self.history.push(ConversationMessage::ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!(
+                                "[参数缺失] 工具 '{}' 缺少必填参数: {}。完整参数说明已在工具列表中更新，请用正确参数重新调用。",
+                                tc.name,
+                                missing.join(", ")
+                            ),
+                        });
+                        continue;
+                    }
+                }
+                // ─── P7-3 结束 ────────────────────────────────────────────────────────
 
                 // Supervised 模式: 执行前需用户确认
                 if self.policy.requires_confirmation() {
@@ -638,7 +683,10 @@ impl Agent {
         }));
 
         // 4. Tool call 循环（工具 spec 由 build_tool_specs 统一管理）
-        let tool_specs = self.build_tool_specs(user_msg);
+        // P7-3: tool_specs 可变，允许在循环内按需升级工具 schema
+        let mut tool_specs = self.build_tool_specs(user_msg);
+        // P7-3: 每轮重置已扩展集合（stream 版本共享同一 expanded_tools）
+        self.expanded_tools.clear();
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -706,6 +754,45 @@ impl Agent {
                         continue;
                     }
                 }
+
+                // ─── P7-3: 动态 Schema 补充 ──────────────────────────────────────────
+                // 检测必填参数缺失（每轮每个工具只触发一次，避免死循环）
+                if !self.expanded_tools.contains(&tc.name) {
+                    let missing = {
+                        self.tools
+                            .iter()
+                            .find(|t| t.name() == tc.name)
+                            .map(|t| find_missing_required_params(&t.parameters_schema(), &tc.arguments))
+                            .unwrap_or_default()
+                    };
+                    if !missing.is_empty() {
+                        self.expanded_tools.insert(tc.name.clone());
+                        // 升级 MCP 工具为 L2 完整 schema（对内置工具无副作用）
+                        if let Some(tool) = self.tools.iter_mut().find(|t| t.name() == tc.name) {
+                            tool.load_full_schema();
+                        }
+                        // 更新 tool_specs 供下一迭代使用
+                        if let Some(tool) = self.tools.iter().find(|t| t.name() == tc.name) {
+                            let new_spec = tool.spec();
+                            if let Some(spec) = tool_specs.iter_mut().find(|s| s.name == tc.name) {
+                                *spec = new_spec;
+                            } else {
+                                tool_specs.push(new_spec);
+                            }
+                        }
+                        debug!("P7-3(stream): 工具 '{}' 缺少参数 {:?}，已注入完整 schema", tc.name, missing);
+                        self.history.push(ConversationMessage::ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!(
+                                "[参数缺失] 工具 '{}' 缺少必填参数: {}。完整参数说明已在工具列表中更新，请用正确参数重新调用。",
+                                tc.name,
+                                missing.join(", ")
+                            ),
+                        });
+                        continue;
+                    }
+                }
+                // ─── P7-3 结束 ────────────────────────────────────────────────────────
 
                 // Supervised 模式: 执行前需用户确认
                 if self.policy.requires_confirmation() {
@@ -1198,6 +1285,28 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
 /// - skill / self_info / config 返回格式化的系统信息
 fn needs_injection_check(tool_name: &str) -> bool {
     matches!(tool_name, "shell" | "file_read" | "file_write" | "git" | "http_request")
+}
+
+/// P7-3: 检测工具调用缺少的必填参数
+///
+/// 根据工具的 JSON Schema `required` 字段，返回 `args` 中缺失的参数名列表。
+/// 如果 schema 没有 `required` 字段，或所有必填参数都已提供，返回空 Vec。
+fn find_missing_required_params(schema: &serde_json::Value, args: &serde_json::Value) -> Vec<String> {
+    let required = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if required.is_empty() {
+        return vec![];
+    }
+
+    let args_obj = args.as_object();
+    required
+        .into_iter()
+        .filter(|r| !args_obj.map(|o| o.contains_key(r.as_str())).unwrap_or(false))
+        .collect()
 }
 
 /// UTF-8 安全的字符串截断
@@ -2315,5 +2424,287 @@ mod tests {
         let messages = vec![make_chat("user", "你好")];
         let result = agent.summarize_history(&messages).await.unwrap();
         assert!(result.contains("摘要"));
+    }
+
+    // --- P7-3: 有 required 字段的 Mock 工具 ---
+
+    struct StrictMockTool {
+        tool_name: String,
+        result: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for StrictMockTool {
+        fn name(&self) -> &str {
+            &self.tool_name
+        }
+        fn description(&self) -> &str {
+            "Strict tool requiring a query parameter"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                }
+            })
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _policy: &SecurityPolicy,
+        ) -> Result<ToolResult> {
+            Ok(ToolResult {
+                success: true,
+                output: self.result.clone(),
+                error: None,
+                ..Default::default()
+            })
+        }
+    }
+
+    // --- P7-3: find_missing_required_params 单元测试 ---
+
+    #[test]
+    fn find_missing_required_params_no_required() {
+        let schema = serde_json::json!({"type": "object", "properties": {}});
+        let args = serde_json::json!({});
+        let missing = find_missing_required_params(&schema, &args);
+        assert!(missing.is_empty(), "无 required 字段时应返回空");
+    }
+
+    #[test]
+    fn find_missing_required_params_all_present() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["path", "mode"],
+            "properties": {}
+        });
+        let args = serde_json::json!({"path": "/foo", "mode": "r"});
+        let missing = find_missing_required_params(&schema, &args);
+        assert!(missing.is_empty(), "所有必填参数都存在时应返回空");
+    }
+
+    #[test]
+    fn find_missing_required_params_some_missing() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["path", "mode"],
+            "properties": {}
+        });
+        let args = serde_json::json!({"path": "/foo"});
+        let missing = find_missing_required_params(&schema, &args);
+        assert_eq!(missing, vec!["mode".to_string()], "应返回缺失的参数名");
+    }
+
+    #[test]
+    fn find_missing_required_params_all_missing() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["a", "b"],
+            "properties": {}
+        });
+        let args = serde_json::json!({});
+        let mut missing = find_missing_required_params(&schema, &args);
+        missing.sort();
+        assert_eq!(missing, vec!["a".to_string(), "b".to_string()], "应返回所有缺失参数");
+    }
+
+    // --- P7-3: schema 动态扩展集成测试 ---
+
+    #[tokio::test]
+    async fn schema_expansion_triggered_on_missing_params() {
+        // LLM 调用 strict_tool 时缺少 "query" → P7-3 注入 schema 提示
+        // LLM 再次调用并提供正确参数 → 执行成功
+        let provider = MockProvider::new(vec![
+            // Phase 1 routing
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 iter 1: 缺少 "query"
+            ChatResponse {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "strict_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
+            // Phase 2 iter 2: 提供正确参数（看到 schema 提示后）
+            ChatResponse {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_2".to_string(),
+                    name: "strict_tool".to_string(),
+                    arguments: serde_json::json!({"query": "hello"}),
+                }],
+            },
+            // Phase 2 iter 3: 最终回复
+            ChatResponse {
+                text: Some("搜索完成".to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(StrictMockTool {
+                tool_name: "strict_tool".to_string(),
+                result: "搜索结果".to_string(),
+            })],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
+        );
+
+        let reply = agent.process_message("搜索 hello").await.unwrap();
+        assert_eq!(reply, "搜索完成");
+
+        // history 中应包含 P7-3 参数缺失提示
+        let has_hint = agent.history().iter().any(|msg| {
+            matches!(msg, ConversationMessage::ToolResult { content, .. } if content.contains("[参数缺失]"))
+        });
+        assert!(has_hint, "P7-3 应在 history 中留下参数缺失提示");
+
+        // expanded_tools 应包含 strict_tool
+        assert!(
+            agent.expanded_tools.contains("strict_tool"),
+            "expanded_tools 应包含 strict_tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_expansion_not_triggered_when_params_present() {
+        // LLM 一开始就提供完整参数 → 不触发 P7-3
+        let provider = MockProvider::new(vec![
+            // Phase 1 routing
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 iter 1: 参数完整
+            ChatResponse {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "strict_tool".to_string(),
+                    arguments: serde_json::json!({"query": "test"}),
+                }],
+            },
+            // Phase 2 iter 2: 最终回复
+            ChatResponse {
+                text: Some("正常完成".to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(StrictMockTool {
+                tool_name: "strict_tool".to_string(),
+                result: "result".to_string(),
+            })],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
+        );
+
+        let reply = agent.process_message("搜索").await.unwrap();
+        assert_eq!(reply, "正常完成");
+
+        // 不应有参数缺失提示
+        let has_hint = agent.history().iter().any(|msg| {
+            matches!(msg, ConversationMessage::ToolResult { content, .. } if content.contains("[参数缺失]"))
+        });
+        assert!(!has_hint, "参数完整时不应触发 P7-3");
+
+        // expanded_tools 应为空
+        assert!(agent.expanded_tools.is_empty(), "expanded_tools 应为空");
+    }
+
+    #[tokio::test]
+    async fn schema_expansion_only_once_per_tool_per_turn() {
+        // 同一工具缺参数两次 → P7-3 只触发一次（第二次直接执行，避免死循环）
+        let provider = MockProvider::new(vec![
+            // Phase 1 routing
+            ChatResponse {
+                text: Some(r#"{"skills": [], "direct": true}"#.to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+            // Phase 2 iter 1: 缺参数 → P7-3 触发
+            ChatResponse {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "strict_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
+            // Phase 2 iter 2: 仍缺参数 → P7-3 不再触发（已在 expanded_tools），直接执行
+            ChatResponse {
+                text: None,
+                reasoning_content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_2".to_string(),
+                    name: "strict_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
+            // Phase 2 iter 3: 最终回复
+            ChatResponse {
+                text: Some("完成".to_string()),
+                reasoning_content: None,
+                tool_calls: vec![],
+            },
+        ]);
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            vec![Box::new(StrictMockTool {
+                tool_name: "strict_tool".to_string(),
+                result: "ok".to_string(),
+            })],
+            Box::new(MockMemory),
+            test_policy(),
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
+        );
+
+        let reply = agent.process_message("test").await.unwrap();
+        assert_eq!(reply, "完成");
+
+        // 参数缺失提示应恰好出现 1 次
+        let hint_count = agent.history().iter().filter(|msg| {
+            matches!(msg, ConversationMessage::ToolResult { content, .. } if content.contains("[参数缺失]"))
+        }).count();
+        assert_eq!(hint_count, 1, "P7-3 每工具每轮只触发一次");
     }
 }
