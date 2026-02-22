@@ -143,6 +143,9 @@ pub struct Agent {
     skills_meta: Vec<SkillMeta>,
     /// Phase 1 路由后加载的 skill 内容，每次 process_message 重置
     routed_skill_content: Option<String>,
+    /// Phase 1.5 关键词路由后的工具名列表，每次 process_message 重置
+    /// 空列表表示降级：暴露所有工具
+    routed_tool_names: Vec<String>,
     /// 启动时加载的身份文件内容
     identity_context: Option<String>,
     /// 当前执行的 Routine 名称（None 表示普通对话模式）
@@ -176,6 +179,7 @@ impl Agent {
             confirm_fn: None,
             skills_meta,
             routed_skill_content: None,
+            routed_tool_names: Vec::new(),
             identity_context,
             routine_name: None,
         }
@@ -431,11 +435,17 @@ impl Agent {
             }
         }
 
+        // ─── Phase 1.5: 关键词工具路由 ────────────────────────────────
+        self.routed_tool_names = crate::agent::tool_groups::route_tools(user_msg);
+        if !self.routed_tool_names.is_empty() {
+            debug!("Phase 1.5 工具路由: {:?}", self.routed_tool_names);
+        }
+
         // ─── Phase 2: 正常 Agent Loop ────────────────────────────────
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
-        // 2. 构造 system prompt
+        // 2. 构造 system prompt（使用路由后的工具列表）
         let system_prompt = self.build_system_prompt(&memories);
 
         // 3. 添加用户消息到 history
@@ -445,21 +455,8 @@ impl Agent {
             reasoning_content: None,
         }));
 
-        // 4. Tool call 循环
-        // 预路由：尝试自动选择专用工具
-        let forced_tool = self.pre_select_tool(user_msg);
-        let tool_specs: Vec<ToolSpec> = if let Some(tool_name) = forced_tool {
-            // 强制只使用指定工具
-            debug!("强制使用工具: {}", tool_name);
-            self.tools
-                .iter()
-                .filter(|t| t.name() == tool_name)
-                .map(|t| t.spec())
-                .collect()
-        } else {
-            // 让 LLM 自行选择
-            self.tools.iter().map(|t| t.spec()).collect()
-        };
+        // 4. Tool call 循环（工具 spec 由 build_tool_specs 统一管理）
+        let tool_specs = self.build_tool_specs(user_msg);
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -620,11 +617,17 @@ impl Agent {
             }
         }
 
+        // ─── Phase 1.5: 关键词工具路由 ────────────────────────────────
+        self.routed_tool_names = crate::agent::tool_groups::route_tools(user_msg);
+        if !self.routed_tool_names.is_empty() {
+            debug!("Phase 1.5 工具路由(stream): {:?}", self.routed_tool_names);
+        }
+
         // ─── Phase 2: 正常 Agent Loop ────────────────────────────────
         // 1. Memory recall
         let memories = self.memory.recall(user_msg, 5).await.unwrap_or_default();
 
-        // 2. 构造 system prompt
+        // 2. 构造 system prompt（使用路由后的工具列表）
         let system_prompt = self.build_system_prompt(&memories);
 
         // 3. 添加用户消息到 history
@@ -634,21 +637,8 @@ impl Agent {
             reasoning_content: None,
         }));
 
-        // 4. Tool call 循环
-        // 预路由：尝试自动选择专用工具
-        let forced_tool = self.pre_select_tool(user_msg);
-        let tool_specs: Vec<ToolSpec> = if let Some(tool_name) = forced_tool {
-            // 强制只使用指定工具
-            debug!("强制使用工具: {}", tool_name);
-            self.tools
-                .iter()
-                .filter(|t| t.name() == tool_name)
-                .map(|t| t.spec())
-                .collect()
-        } else {
-            // 让 LLM 自行选择
-            self.tools.iter().map(|t| t.spec()).collect()
-        };
+        // 4. Tool call 循环（工具 spec 由 build_tool_specs 统一管理）
+        let tool_specs = self.build_tool_specs(user_msg);
         let mut final_text = String::new();
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -854,13 +844,19 @@ impl Agent {
         // [1] 身份描述
         parts.push("你是 RRClaw，一个安全优先的 AI 助手。".to_string());
 
-        // [2] 可用工具描述
+        // [2] 可用工具描述（根据 Phase 1.5 路由结果过滤；空列表 = 显示所有）
         if !self.tools.is_empty() {
             let mut tools_desc = "你可以使用以下工具:\n".to_string();
 
-            // 内置工具：完整描述
+            // 内置工具：完整描述（路由激活时只显示相关工具，skill 工具始终显示）
             for tool in &self.tools {
-                if !tool.name().starts_with("mcp_") {
+                if tool.name().starts_with("mcp_") {
+                    continue;
+                }
+                let is_active = self.routed_tool_names.is_empty()
+                    || self.routed_tool_names.iter().any(|n| n == tool.name())
+                    || tool.name() == "skill";
+                if is_active {
                     tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
                 }
             }
@@ -961,6 +957,37 @@ impl Agent {
         ).to_string());
 
         parts.join("\n\n")
+    }
+
+    /// 构造本轮对话的工具 spec 列表（传给 Provider）
+    ///
+    /// 优先级：
+    /// 1. pre_select_tool 命中 → 只返回该单一工具
+    /// 2. routed_tool_names 非空 → 返回路由工具 + skill 工具（始终保留）
+    /// 3. 兜底 → 所有工具
+    fn build_tool_specs(&self, user_msg: &str) -> Vec<ToolSpec> {
+        // Priority 1: forced tool (git 命令直接路由到 git 工具)
+        if let Some(tool_name) = self.pre_select_tool(user_msg) {
+            debug!("强制使用工具: {}", tool_name);
+            return self.tools.iter().filter(|t| t.name() == tool_name).map(|t| t.spec()).collect();
+        }
+
+        // Priority 2: Phase 1.5 关键词路由结果
+        if !self.routed_tool_names.is_empty() {
+            debug!("工具路由激活: {:?}", self.routed_tool_names);
+            return self
+                .tools
+                .iter()
+                .filter(|t| {
+                    self.routed_tool_names.iter().any(|n| n == t.name())
+                        || t.name() == "skill" // skill 工具始终可用（C 辅助路径）
+                })
+                .map(|t| t.spec())
+                .collect();
+        }
+
+        // Fallback: 所有工具（无关键词匹配）
+        self.tools.iter().map(|t| t.spec()).collect()
     }
 
     /// 预处理用户输入，尝试自动路由到专用工具
