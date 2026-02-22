@@ -124,6 +124,8 @@ pub struct RoutineEngine {
     /// CLI 通知器：由 run_repl 设置，用于将 routine 输出通过 reedline ExternalPrinter 打印
     /// 避免在 raw mode 下直接 eprintln! 导致文字乱排
     cli_notifier: std::sync::OnceLock<tokio::sync::mpsc::Sender<String>>,
+    /// 调度器触发计数（集成测试用，验证 scheduler 真实触发行为）
+    pub trigger_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl RoutineEngine {
@@ -161,6 +163,7 @@ impl RoutineEngine {
             memory,
             db: Arc::new(Mutex::new(conn)),
             cli_notifier: std::sync::OnceLock::new(),
+            trigger_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -228,31 +231,37 @@ impl RoutineEngine {
     ///
     /// 为每个 enabled Routine 注册 cron job，然后启动调度器。
     /// 调度器在后台 tokio task 中运行，不阻塞调用方。
-    /// 将单个 Routine 添加到调度器（供 persist_add_routine 调用）
-    async fn schedule_job(self: Arc<Self>, routine: &Routine) -> Result<()> {
-        if !routine.enabled {
-            return Ok(()); // 禁用的 routine 不调度
-        }
-
-        let engine = Arc::clone(&self);
-        let routine_name = routine.name.clone();
-        let routine_schedule = routine.schedule.clone();
-
-        // tokio-cron-scheduler 需要 6 字段 cron（秒 分 时 日 月 周）
-        // 自动将标准 5 字段转换
-        let schedule_with_seconds = convert_5field_to_6field(&routine_schedule);
-
-        let job = Job::new_async(schedule_with_seconds.as_str(), move |_uuid, _lock| {
+    /// 将单个 Routine 注册为 cron job
+    ///
+    /// 提取公共逻辑供 start() 和 schedule_job() 共用。
+    /// job handler 会在每次触发时：
+    /// 1. 递增 trigger_count（供集成测试验证 scheduler 真实触发）
+    /// 2. 调用 execute_routine 运行任务
+    fn make_job(engine: Arc<Self>, name: String, schedule: &str) -> Result<Job> {
+        let schedule_6field = convert_5field_to_6field(schedule);
+        let name_for_err = name.clone(); // 保留一份用于错误信息（name 会被 move 进闭包）
+        Job::new_async(&schedule_6field, move |_uuid, _lock| {
             let engine = Arc::clone(&engine);
-            let name = routine_name.clone();
+            let name = name.clone();
             Box::pin(async move {
+                engine.trigger_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 info!("Routine 触发: {}", name);
                 if let Err(e) = engine.execute_routine(&name).await {
                     error!("Routine 执行失败: {} - {}", name, e);
                 }
             })
         })
-        .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
+        .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", name_for_err, e))
+    }
+
+    /// 将单个 Routine 添加到调度器（供 persist_add_routine 调用）
+    async fn schedule_job(self: Arc<Self>, routine: &Routine) -> Result<()> {
+        if !routine.enabled {
+            return Ok(()); // 禁用的 routine 不调度
+        }
+
+        let job = Self::make_job(Arc::clone(&self), routine.name.clone(), &routine.schedule)
+            .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
 
         // 添加 job 到调度器
         self.scheduler
@@ -301,26 +310,8 @@ impl RoutineEngine {
 
         for routine in &enabled_routines {
             info!("注册 Routine: {} (schedule={})", routine.name, routine.schedule);
-            let engine = Arc::clone(&self);
-            let routine_name = routine.name.clone();
-            let routine_schedule = routine.schedule.clone();
-
-            // tokio-cron-scheduler 需要 6 字段 cron（秒 分 时 日 月 周）
-            let schedule_with_seconds = convert_5field_to_6field(&routine_schedule);
-
-            // 构造 cron job（async handler）
-            let job = Job::new_async(schedule_with_seconds.as_str(), move |_uuid, _lock| {
-                let engine = Arc::clone(&engine);
-                let name = routine_name.clone();
-                Box::pin(async move {
-                    info!("Routine 触发: {}", name);
-                    if let Err(e) = engine.execute_routine(&name).await {
-                        error!("Routine 执行失败: {} - {}", name, e);
-                    }
-                })
-            })
-            .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
-
+            let job = Self::make_job(Arc::clone(&self), routine.name.clone(), &routine.schedule)
+                .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
             self.scheduler
                 .add(job)
                 .await
@@ -356,14 +347,16 @@ impl RoutineEngine {
             return Ok(format!("Routine '{}' 已禁用，跳过执行。", name));
         }
 
-        const MAX_RETRIES: usize = 3;
+        // Routine 级别最大重试次数：来自 reliability 配置（默认 3，每次间隔 5 分钟）
+        // 测试时可将 config.reliability.max_retries 设为 1 以跳过重试等待
+        let max_retries = self.config.reliability.max_retries.max(1);
         const RETRY_DELAY_SECS: u64 = 300; // 5 分钟
         const TIMEOUT_SECS: u64 = 300;     // 5 分钟超时
 
         let started_at = chrono::Utc::now().to_rfc3339();
         let mut last_error = String::new();
 
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..max_retries {
             if attempt > 0 {
                 info!("Routine '{}' 第 {} 次重试，等待 {}s...", name, attempt, RETRY_DELAY_SECS);
                 tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
@@ -403,7 +396,7 @@ impl RoutineEngine {
 
         // 全部重试失败
         let finished_at = chrono::Utc::now().to_rfc3339();
-        error!("Routine '{}' 全部 {} 次重试均失败，最后错误: {}", name, MAX_RETRIES, last_error);
+        error!("Routine '{}' 全部 {} 次重试均失败，最后错误: {}", name, max_retries, last_error);
         self.log_execution(RoutineExecution {
             routine_name: name.to_string(),
             started_at,
@@ -413,7 +406,7 @@ impl RoutineEngine {
             error: Some(last_error.clone()),
         })
         .await;
-        let error_msg = format!("[Routine: {}] 执行失败（{} 次重试后）: {}", name, MAX_RETRIES, last_error);
+        let error_msg = format!("[Routine: {}] 执行失败（{} 次重试后）: {}", name, max_retries, last_error);
         self.send_result(&routine, &error_msg).await;
         Err(eyre!("{}", error_msg))
     }
