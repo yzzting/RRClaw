@@ -20,8 +20,12 @@ pub struct CompatibleProvider {
 
 impl CompatibleProvider {
     pub fn new(config: &ProviderConfig) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("构建 reqwest Client 失败");
         Self {
-            client: reqwest::Client::new(),
+            client,
             base_url: config.base_url.trim_end_matches('/').to_string(),
             api_key: config.api_key.clone(),
         }
