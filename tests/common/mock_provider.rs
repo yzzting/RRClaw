@@ -1,6 +1,7 @@
-//! 测试专用 MockProvider
 // 每个集成测试文件只使用 MockProvider 的部分方法，dead_code 为预期行为
 #![allow(dead_code)]
+
+//! 测试专用 MockProvider
 //!
 //! 实现 Provider trait，预置响应队列（VecDeque），
 //! 每次 chat_with_tools 调用从队列头部弹出一个 ChatResponse。

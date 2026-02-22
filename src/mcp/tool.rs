@@ -210,9 +210,7 @@ mod tests {
     #[test]
     fn l1_loaded_flag_starts_false_for_new_l1() {
         // Verify logical behavior: loaded starts false, load_full_schema sets it true
-        let mut loaded = false;
-        // Simulate load_full_schema()
-        loaded = true;
-        assert!(loaded);
+        let loaded = false;
+        assert!(!loaded);
     }
 }

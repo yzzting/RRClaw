@@ -1243,7 +1243,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn parse_every_1_minute() {
         let cron = parse_schedule_to_cron("每1分钟").unwrap();
         // 每1分钟 = 每分钟
