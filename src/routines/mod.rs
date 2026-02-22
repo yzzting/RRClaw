@@ -121,6 +121,9 @@ pub struct RoutineEngine {
     config: Arc<Config>,
     memory: Arc<dyn Memory>,
     db: Arc<Mutex<Connection>>,
+    /// CLI 通知器：由 run_repl 设置，用于将 routine 输出通过 reedline ExternalPrinter 打印
+    /// 避免在 raw mode 下直接 eprintln! 导致文字乱排
+    cli_notifier: std::sync::OnceLock<tokio::sync::mpsc::Sender<String>>,
 }
 
 impl RoutineEngine {
@@ -157,6 +160,7 @@ impl RoutineEngine {
             config,
             memory,
             db: Arc::new(Mutex::new(conn)),
+            cli_notifier: std::sync::OnceLock::new(),
         })
     }
 
@@ -210,6 +214,14 @@ impl RoutineEngine {
             .collect();
 
         Ok(routines)
+    }
+
+    /// 设置 CLI 通知器（由 run_repl 在启动时调用）
+    ///
+    /// routine 执行结果将通过此 sender 发送，由 reedline ExternalPrinter 负责
+    /// 在正确的终端位置打印，避免 raw mode 下 eprintln! 导致文字乱排。
+    pub fn set_cli_notifier(&self, tx: tokio::sync::mpsc::Sender<String>) {
+        let _ = self.cli_notifier.set(tx);
     }
 
     /// 启动所有已启用的 Routine 调度
@@ -503,12 +515,18 @@ impl RoutineEngine {
 
     /// 将执行结果路由到指定通道
     async fn send_result(&self, routine: &Routine, output: &str) {
-        let message = format!("\n[Routine: {}]\n{}\n", routine.name, output);
+        let message = format!("[Routine: {}]\n{}\n─────────────────────────────────────────", routine.name, output);
         match routine.channel.as_str() {
             "cli" => {
-                // 使用 eprintln! 打印到 stderr，加分隔线让输出更清晰
-                eprintln!("{}", message);
-                eprintln!("─────────────────────────────────────────");
+                // 优先通过 ExternalPrinter 打印：reedline 在 raw mode 下管理终端状态，
+                // 直接 eprintln! 会因 \n 不含 \r 导致文字从当前列开始打印（阶梯乱排）。
+                // ExternalPrinter 能在正确的终端位置插入输出，不影响 reedline 的 prompt。
+                if let Some(tx) = self.cli_notifier.get() {
+                    let _ = tx.send(message).await;
+                } else {
+                    // 未设置通知器（如单元测试或非 CLI 场景），降级为直接打印
+                    eprintln!("{}", message);
+                }
             }
             "telegram" => {
                 if self.config.telegram.is_some() {
@@ -517,12 +535,20 @@ impl RoutineEngine {
                     }
                 } else {
                     warn!("Routine '{}' 配置了 channel=telegram，但未找到 Telegram 配置", routine.name);
-                    eprintln!("{}", message); // 降级打印到 CLI
+                    if let Some(tx) = self.cli_notifier.get() {
+                        let _ = tx.send(message).await;
+                    } else {
+                        eprintln!("{}", message);
+                    }
                 }
             }
             other => {
                 warn!("Routine '{}' 使用了未知 channel: {}，降级为 cli", routine.name, other);
-                eprintln!("{}", message);
+                if let Some(tx) = self.cli_notifier.get() {
+                    let _ = tx.send(message).await;
+                } else {
+                    eprintln!("{}", message);
+                }
             }
         }
     }

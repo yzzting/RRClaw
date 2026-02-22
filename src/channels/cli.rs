@@ -1,6 +1,6 @@
 use color_eyre::eyre::{Context, Result, eyre};
 use dialoguer::{Confirm, Input, Select};
-use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
+use reedline::{DefaultPrompt, DefaultPromptSegment, ExternalPrinter, Reedline, Signal};
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
@@ -101,7 +101,22 @@ pub async fn run_repl(
         agent.set_history(history);
     }
 
-    let mut line_editor = Reedline::create();
+    // 创建 ExternalPrinter：允许后台 routine 任务在 reedline raw mode 下安全打印
+    // reedline 会在正确的终端位置插入输出，不会因 \n 缺少 \r 导致文字从当前列开始打印
+    let printer = ExternalPrinter::<String>::default();
+    if let Some(engine) = &routine_engine {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(20);
+        engine.set_cli_notifier(tx);
+        // 桥接任务：将 tokio mpsc channel 转发给 ExternalPrinter（crossbeam channel）
+        let printer_sender = printer.sender();
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                let _ = printer_sender.send(msg);
+            }
+        });
+    }
+
+    let mut line_editor = Reedline::create().with_external_printer(printer);
     let prompt = DefaultPrompt::new(
         DefaultPromptSegment::Basic("rrclaw".to_string()),
         DefaultPromptSegment::Empty,
