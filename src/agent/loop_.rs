@@ -541,7 +541,9 @@ impl Agent {
                 debug!("工具结果: {}", truncate_str(&result, 200));
 
                 // ─── Prompt Injection 检测 ───────────────────────────────────────────
-                let final_content = if self.policy.injection_check {
+                // 只检测外部数据工具（shell/file_read/git/http_request）；
+                // 内部工具（memory_*/skill/self_info/config）返回受控内容，跳过检测
+                let final_content = if self.policy.injection_check && needs_injection_check(&tc.name) {
                     let injection = crate::security::injection::check_tool_result(&result);
                     if let Some(ref sev) = injection.severity {
                         info!(
@@ -756,7 +758,9 @@ impl Agent {
                 }
 
                 // ─── Prompt Injection 检测 ───────────────────────────────────────────
-                let final_content = if self.policy.injection_check {
+                // 只检测外部数据工具（shell/file_read/git/http_request）；
+                // 内部工具（memory_*/skill/self_info/config）返回受控内容，跳过检测
+                let final_content = if self.policy.injection_check && needs_injection_check(&tc.name) {
                     let injection = crate::security::injection::check_tool_result(&result);
                     if let Some(ref sev) = injection.severity {
                         info!(
@@ -1118,6 +1122,19 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
         }
     }
     out
+}
+
+/// 判断工具结果是否需要注入检测
+///
+/// 外部数据工具（shell、file_read、git、http_request）需要检测，
+/// 因为其内容来自外部/用户环境，存在恶意构造的可能。
+///
+/// 内部工具（memory_*、skill、self_info、config）返回的是系统自身受控内容，
+/// 不需要检测：
+/// - memory_recall 返回的是之前我们自己存储的记忆，行数多但完全可信
+/// - skill / self_info / config 返回格式化的系统信息
+fn needs_injection_check(tool_name: &str) -> bool {
+    matches!(tool_name, "shell" | "file_read" | "file_write" | "git" | "http_request")
 }
 
 /// UTF-8 安全的字符串截断
