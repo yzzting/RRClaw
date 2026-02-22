@@ -761,9 +761,10 @@ impl RoutineEngine {
             }
         }
         let field_count = routine.schedule.split_whitespace().count();
-        if field_count != 5 {
+        if field_count != 5 && field_count != 6 {
             return Err(eyre!(
-                "schedule 格式错误：应为 5 个字段的 cron 表达式，当前 {} 个字段。\n示例：\"0 8 * * *\" 表示每天早 8 点",
+                "schedule 格式错误：应为 5 或 6 字段的 cron 表达式，当前 {} 个字段。\n\
+                 示例：\"0 8 * * *\"（5字段，每天早 8 点）或 \"0 0 8 * * *\"（6字段，秒 分 时 日 月 周）",
                 field_count
             ));
         }
