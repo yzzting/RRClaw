@@ -52,8 +52,23 @@ impl McpManager {
         Self { servers }
     }
 
-    /// 获取所有 MCP tools，转换为 RRClaw Tool trait 对象
+    /// 获取所有 MCP tools（L2 完整模式），转换为 RRClaw Tool trait 对象
+    ///
+    /// 返回包含完整 description + parameters_schema 的工具，适合非懒加载场景。
     pub async fn tools(&self) -> Vec<Box<dyn Tool>> {
+        self.tools_inner(false).await
+    }
+
+    /// 获取所有 MCP tools（L1 懒加载模式），转换为 RRClaw Tool trait 对象
+    ///
+    /// 返回只含一句话简介 + 极简 schema 的工具。LLM 首次调用某工具后，
+    /// Agent 自动调用 `load_full_schema()` 将其升级为 L2 完整 schema。
+    pub async fn tools_l1(&self) -> Vec<Box<dyn Tool>> {
+        self.tools_inner(true).await
+    }
+
+    /// 内部实现：根据 lazy 标志创建 L1 或 L2 工具
+    async fn tools_inner(&self, lazy: bool) -> Vec<Box<dyn Tool>> {
         let mut result: Vec<Box<dyn Tool>> = Vec::new();
 
         for server in &self.servers {
@@ -68,14 +83,16 @@ impl McpManager {
                         {
                             continue;
                         }
-                        result.push(Box::new(McpTool::new(
-                            &server.name,
-                            tool_def,
-                            server.peer.clone(),
-                        )));
+                        let mcp_tool = if lazy {
+                            McpTool::new_l1(&server.name, tool_def, server.peer.clone())
+                        } else {
+                            McpTool::new(&server.name, tool_def, server.peer.clone())
+                        };
+                        result.push(Box::new(mcp_tool));
                         count += 1;
                     }
-                    info!("MCP Server '{}' 加载了 {} 个工具", server.name, count);
+                    info!("MCP Server '{}' 加载了 {} 个工具（{}）", server.name, count,
+                        if lazy { "L1 懒加载" } else { "L2 完整" });
                 }
                 Err(e) => {
                     warn!(

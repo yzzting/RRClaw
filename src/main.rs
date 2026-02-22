@@ -225,7 +225,7 @@ async fn run_agent(
     let mcp_manager = if let Some(mcp_config) = &config.mcp {
         if !mcp_config.servers.is_empty() {
             let mgr = rrclaw::mcp::McpManager::connect_all(&mcp_config.servers).await;
-            let mcp_tools = mgr.tools().await;
+            let mcp_tools = mgr.tools_l1().await;
             if !mcp_tools.is_empty() {
                 tracing::info!("已加载 {} 个 MCP 工具", mcp_tools.len());
                 tools.extend(mcp_tools);

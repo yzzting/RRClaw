@@ -30,6 +30,7 @@ use shell::ShellTool;
 use skill::SkillTool;
 
 /// 创建所有工具实例
+#[allow(clippy::too_many_arguments)]
 pub fn create_tools(
     app_config: Config,
     provider: Arc<dyn Provider>,

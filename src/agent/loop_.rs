@@ -540,6 +540,16 @@ impl Agent {
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
 
+                // MCP 工具首次调用后升级为 L2 完整 schema（下轮用户消息生效）
+                if tc.name.starts_with("mcp_") {
+                    if let Some(tool) = self.tools.iter_mut().find(|t| t.name() == tc.name) {
+                        if !tool.is_full_schema_loaded() {
+                            tool.load_full_schema();
+                            debug!("MCP 工具 '{}' 已升级为 L2 完整 schema", tc.name);
+                        }
+                    }
+                }
+
                 // ─── Prompt Injection 检测 ───────────────────────────────────────────
                 // 只检测外部数据工具（shell/file_read/git/http_request）；
                 // 内部工具（memory_*/skill/self_info/config）返回受控内容，跳过检测
@@ -736,6 +746,16 @@ impl Agent {
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
                 debug!("工具结果: {}", truncate_str(&result, 200));
 
+                // MCP 工具首次调用后升级为 L2 完整 schema（下轮用户消息生效）
+                if tc.name.starts_with("mcp_") {
+                    if let Some(tool) = self.tools.iter_mut().find(|t| t.name() == tc.name) {
+                        if !tool.is_full_schema_loaded() {
+                            tool.load_full_schema();
+                            debug!("MCP 工具 '{}' 已升级为 L2 完整 schema", tc.name);
+                        }
+                    }
+                }
+
                 // 发送执行结果状态
                 if result.starts_with("[失败]") || result.starts_with("[错误]") {
                     let _ = tx.send(StreamEvent::ToolStatus {
@@ -837,9 +857,25 @@ impl Agent {
         // [2] 可用工具描述
         if !self.tools.is_empty() {
             let mut tools_desc = "你可以使用以下工具:\n".to_string();
+
+            // 内置工具：完整描述
             for tool in &self.tools {
-                tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+                if !tool.name().starts_with("mcp_") {
+                    tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+                }
             }
+
+            // MCP 工具：L1 简介（需要时自动升级为完整参数）
+            let mcp_tools: Vec<_> = self.tools.iter()
+                .filter(|t| t.name().starts_with("mcp_"))
+                .collect();
+            if !mcp_tools.is_empty() {
+                tools_desc.push_str("\n[MCP 工具]（需要时可用，首次调用后自动获取完整参数说明）:\n");
+                for tool in &mcp_tools {
+                    tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+                }
+            }
+
             parts.push(tools_desc);
         }
 

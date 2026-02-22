@@ -29,6 +29,15 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// 懒加载：将此工具升级为完整 L2 schema（默认无操作）
+    /// MCP 懒加载工具覆盖此方法，在首次调用后自动升级 schema
+    fn load_full_schema(&mut self) {}
+
+    /// 是否已加载完整 schema（默认 true；MCP 懒加载工具在升级前返回 false）
+    fn is_full_schema_loaded(&self) -> bool {
+        true
+    }
+
     /// 生成 ToolSpec 供 Provider 使用
     fn spec(&self) -> ToolSpec {
         ToolSpec {
