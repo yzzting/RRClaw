@@ -320,14 +320,10 @@ A2.8  实现 E2-8（ClaudeProvider，可选）
 
 ---
 
-## 开放问题（实现前需确认）
+## 已确认的实现决策
 
-1. **MockProvider 位置**：放 `src/providers/traits.rs` 的 `#[cfg(test)]` 块，还是
-   独立的 `src/providers/mock.rs`（用 `#[cfg(any(test, feature="test-utils"))]`）？
-   - 倾向：独立 mock.rs，`#[cfg(test)]`，这样 E2E test 也能 use
-
-2. **A1 时间敏感性**：每秒 cron + 2s sleep 在 CI 环境下是否稳定？
-   - CI 机器可能有抖动，考虑 sleep 3s 并允许"至少1条"而非"恰好2条"
-
-3. **E2E Agent 构造**：`Agent::new()` 目前参数较多，是否需要 builder pattern？
-   - 倾向：先用辅助函数包装，不改 Agent 公开 API
+| 问题 | 决策 |
+|------|------|
+| MockProvider 位置 | 独立 `tests/common/mock_provider.rs`，在 `tests/common/mod.rs` 中 re-export |
+| A1 sleep 时长 | 3s（比 2s 多 1s 缓冲，CI 调度抖动时更稳定） |
+| E2E Agent 构造 | `tests/common/mod.rs` 中的辅助函数 `test_agent(base_url, autonomy)`，不改 Agent API |
