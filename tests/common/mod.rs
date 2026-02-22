@@ -128,3 +128,38 @@ pub fn readonly_policy(workspace: &Path) -> SecurityPolicy {
         injection_check: false,
     }
 }
+
+/// 构造注入检测策略：Full autonomy，injection_check=true，allowed_commands=["echo"]
+pub fn injection_policy(workspace: &Path) -> SecurityPolicy {
+    // macOS: /var → /private/var，canonicalize 确保路径一致
+    let canonical = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    SecurityPolicy {
+        autonomy: AutonomyLevel::Full,
+        allowed_commands: vec!["echo".to_string()],
+        workspace_dir: canonical,
+        blocked_paths: vec![],
+        http_allowed_hosts: vec![],
+        injection_check: true,
+    }
+}
+
+/// 创建包含 ShellTool + FileReadTool 的测试 Agent（E2-8 注入检测用）
+pub fn test_agent_with_file_tool(mock: MockProvider, policy: SecurityPolicy) -> rrclaw::agent::Agent {
+    rrclaw::agent::Agent::new(
+        Box::new(mock),
+        vec![
+            Box::new(rrclaw::tools::shell::ShellTool),
+            Box::new(rrclaw::tools::file::FileReadTool),
+        ],
+        Box::new(NoopMemory),
+        policy,
+        "mock".to_string(),
+        "http://mock".to_string(),
+        "mock-model".to_string(),
+        0.0,
+        vec![],
+        None,
+    )
+}
