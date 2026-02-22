@@ -126,6 +126,8 @@ pub struct RoutineEngine {
     cli_notifier: std::sync::OnceLock<tokio::sync::mpsc::Sender<String>>,
     /// 调度器触发计数（集成测试用，验证 scheduler 真实触发行为）
     pub trigger_count: Arc<std::sync::atomic::AtomicUsize>,
+    /// routine name → scheduler job UUID（用于 delete/disable 时精确注销 cron job）
+    job_uuids: std::sync::RwLock<std::collections::HashMap<String, uuid::Uuid>>,
 }
 
 impl RoutineEngine {
@@ -164,6 +166,7 @@ impl RoutineEngine {
             db: Arc::new(Mutex::new(conn)),
             cli_notifier: std::sync::OnceLock::new(),
             trigger_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            job_uuids: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -263,11 +266,13 @@ impl RoutineEngine {
         let job = Self::make_job(Arc::clone(&self), routine.name.clone(), &routine.schedule)
             .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
 
-        // 添加 job 到调度器
-        self.scheduler
+        // 添加 job 到调度器，记录 UUID 供后续 remove 使用
+        let uuid = self
+            .scheduler
             .add(job)
             .await
             .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
+        self.job_uuids.write().unwrap().insert(routine.name.to_string(), uuid);
 
         // 如果调度器尚未启动，立即启动（处理启动时无 routine，后续添加的情况）
         let should_start = {
@@ -312,10 +317,12 @@ impl RoutineEngine {
             info!("注册 Routine: {} (schedule={})", routine.name, routine.schedule);
             let job = Self::make_job(Arc::clone(&self), routine.name.clone(), &routine.schedule)
                 .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
-            self.scheduler
+            let uuid = self
+                .scheduler
                 .add(job)
                 .await
                 .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
+            self.job_uuids.write().unwrap().insert(routine.name.clone(), uuid);
         }
 
         self.scheduler
@@ -813,12 +820,24 @@ impl RoutineEngine {
             db.execute("DELETE FROM routines WHERE name = ?1", params![name])
                 .map_err(|e| eyre!("删除 Routine 失败: {}", e))?;
         }
-        // 同步从内存移除（调度器残留 job 下次触发时会得到"不存在"错误，无害）
+        // 从调度器精确注销 cron job，防止已删除的 routine 继续触发
+        // 注意：必须先取出 UUID 并 drop 锁（RwLockWriteGuard 不是 Send），再跨 .await
+        let maybe_uuid = self.job_uuids.write().unwrap().remove(name);
+        if let Some(uuid) = maybe_uuid {
+            if let Err(e) = self.scheduler.remove(&uuid).await {
+                warn!("移除调度器 job 失败（无害，已从内存删除）: {} - {:?}", name, e);
+            }
+        }
+        // 同步从内存移除
         self.routines.write().unwrap().retain(|r| r.name != name);
         Ok(())
     }
 
     /// 在 SQLite 中更新 enabled 状态并同步更新内存 Vec
+    ///
+    /// disable(false) 会从调度器注销 cron job，停止触发。
+    /// enable(true) 只更新 DB/内存状态；若需立即生效需重启 RoutineEngine
+    /// （或调用 persist_add_routine 重新注册）。
     pub async fn persist_set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
         {
             if !self.routines.read().unwrap().iter().any(|r| r.name == name) {
@@ -839,6 +858,17 @@ impl RoutineEngine {
             .iter_mut()
             .filter(|r| r.name == name)
             .for_each(|r| r.enabled = enabled);
+
+        // disable 时从调度器精确注销，防止继续触发
+        // 注意：必须先取出 UUID 并 drop 锁，再跨 .await
+        if !enabled {
+            let maybe_uuid = self.job_uuids.write().unwrap().remove(name);
+            if let Some(uuid) = maybe_uuid {
+                if let Err(e) = self.scheduler.remove(&uuid).await {
+                    warn!("移除调度器 job 失败（无害，内存已标记禁用）: {} - {:?}", name, e);
+                }
+            }
+        }
         Ok(())
     }
 }
