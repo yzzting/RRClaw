@@ -1206,103 +1206,58 @@ async fn handle_routine_add(
 
 ### 9.1 设计思路
 
-用户输入自然语言时间描述（如"每天早上8点"），调用 LLM 转换为标准 cron 表达式。
+用户输入自然语言时间描述（如"每1分钟提醒我喝水"），调用 LLM 转换为标准 5 字段 cron 表达式。
 
-### 9.2 实现方案
+### 9.2 实现位置
 
-在 `src/routines/mod.rs` 中新增：
+- `src/tools/routine.rs`：`RoutineTool::parse_schedule_with_llm()` — 调用 LLM 解析
+- `src/routines/mod.rs`：`parse_schedule_to_cron()` — 保留正则解析（供 config.toml 静态配置用）
 
-```rust
-/// 将自然语言时间描述转换为 cron 表达式
-///
-/// 使用 LLM 进行转换，避免让用户记忆 cron 语法。
-/// 支持的中文模式：
-///   - 每天早上/下午/晚上 X 点 → "0 X * * *"
-///   - 每周X早上/下午/晚上 X 点 → "0 X * * W"
-///   - 每月X号 X 点 → "0 X X * *"
-///   - 每小时 → "0 * * * *"
-///   - 每X小时 → "0 */X * * *"
-pub async fn parse_schedule_to_cron(desc: &str) -> Result<String> {
-    let prompt = format!(
-        r#"将下面的中文时间描述转换为标准 5 字段 cron 表达式（分 时 日 月 周）。
+### 9.3 解析流程
 
-要求：
-1. 只返回 cron 表达式，不要任何解释
-2. 分、时用具体数字替换，* 表示任意
-3. 周一=1，周日=0 或 7
-
-时间描述：{}
-
-示例：
-- "每天早上8点" → "0 8 * * *"
-- "每小时" → "0 * * * *"
-- "每周一早上9点" → "0 9 * * 1"#,
-        desc
-    );
-
-    // 调用 LLM（复用已配置的 provider）
-    // 返回 cron 表达式
-}
+```
+用户输入 schedule 参数
+    │
+    ▼
+判断是否为 5 字段 cron（如 "0 8 * * *"）
+    │
+    ├── 是 → 直接使用
+    │
+    └── 否 → 调用 LLM 解析为 5 字段 cron
+              │
+              ▼
+           存入数据库（5 字段）
+              │
+              ▼
+           schedule_job() 添加到调度器时
+           自动转换 5→6 字段
 ```
 
-### 9.3 简化实现（第一版）
+### 9.4 LLM Prompt
 
-为了快速上线，第一版可以使用简单的规则匹配 + LLM 回退：
+```
+你是一个 cron 表达式转换助手。
+将用户的中文时间描述转换为标准 5 字段 cron 表达式（分 时 日 月 周）。
+只返回 cron 表达式，不要解释。
 
-```rust
-/// 快速解析常见模式，复杂情况调用 LLM
-fn quick_parse_schedule(desc: &str) -> Option<String> {
-    let desc = desc.trim();
-
-    // 每天早上 X 点
-    if let Some(m) = regex::Regex::new(r"每天早上(\d{1,2})点?").unwrap().captures(desc) {
-        let hour: u32 = m.get(1)?.as_str().parse().ok()?;
-        if hour < 24 { return Some(format!("0 {} * * *", hour)); }
-    }
-
-    // 每天下午 X 点 (12-23)
-    if let Some(m) = regex::Regex::new(r"每天下午(\d{1,2})点?").unwrap().captures(desc) {
-        let hour: u32 = m.get(1)?.as_str().parse().ok()?;
-        let hour = hour + 12;
-        if hour < 24 { return Some(format!("0 {} * * *", hour)); }
-    }
-
-    // 每小时
-    if desc == "每小时" || desc == "每小时整点" {
-        return Some("0 * * * *".to_string());
-    }
-
-    // 每 X 小时
-    if let Some(m) = regex::Regex::new(r"每(\d+)小时").unwrap().captures(desc) {
-        let hours: u32 = m.get(1)?.as_str().parse().ok()?;
-        if hours > 0 && hours <= 24 { return Some(format!("0 */{} * * *", hours)); }
-    }
-
-    // 每周 X 早上/下午
-    let week_patterns = [
-        ("周一", 1), ("周二", 2), ("周三", 3), ("周四", 4),
-        ("周五", 5), ("周六", 6), ("周日", 7),
-    ];
-    for (day_name, day_num) in week_patterns {
-        let pattern = format!(r"每周{}早上(\d{{1,2}})点?", day_name);
-        if let Some(m) = regex::Regex::new(&pattern).ok()?.captures(desc) {
-            let hour: u32 = m.get(1)?.as_str().parse().ok()?;
-            if hour < 24 { return Some(format!("0 {} * * {}", hour, day_num)); }
-        }
-    }
-
-    // 每月 X 号
-    if let Some(m) = regex::Regex::new(r"每月(\d{1,2})号?\s*(?:早上|下午|晚上)?(\d{1,2})点?").unwrap().captures(desc) {
-        let day: u32 = m.get(1)?.as_str().parse().ok()?;
-        let hour = m.get(2).and_then(|h| h.as_str().parse().ok()).unwrap_or(0);
-        if day <= 31 && hour < 24 { return Some(format!("0 {} {} * *", hour, day)); }
-    }
-
-    None // 无法快速解析，返回 None 供 LLM 回退
-}
+转换规则：
+- 分(0-59) 时(0-23) 日(1-31) 月(1-12) 周(0-6, 0=周日)
+- "每1分钟" → "0 * * * *"
+- "每5分钟" → "0,5,10,15,20,25,30,35,40,45,50,55 * * * *"
+- "每天9点" → "0 9 * * *"
+- "每周一早上9点" → "0 9 * * 1"
 ```
 
-### 9.4 Prompt 示例
+### 9.5 为什么不用正则
+
+正则无法处理带任务描述的输入，例如：
+- 输入："每1分钟提醒我喝水"
+- 正则匹配："每1分钟"（后面的"提醒我喝水"被忽略，可能导致误匹配）
+- LLM 理解：完整的上下文，理解用户意图是"每1分钟执行一次提醒任务"
+
+---
+
+### 9.6 Prompt 示例
 
 ```
 用户输入: "每天早上8点"
@@ -1406,8 +1361,20 @@ Routine 触发时，用户可能正在 REPL 中输入命令。使用 `eprintln!`
 
 ### 12.6 cron 表达式格式
 
-使用标准 5 字段 cron（`分 时 日 月 周`），`tokio-cron-scheduler` 内部使用 `cron` crate 解析：
+**用户使用标准 5 字段格式**（分 时 日 月 周），代码在调度时会自动转换为 6 字段：
 
+```
+用户输入（5 字段）    代码自动转换（6 字段）    说明
+─────────────────────────────────────────────────────────
+0 8 * * *            0 0 8 * * *            每天早 8 点
+0 * * * *            0 0 * * * *            每小时整点
+0 9 * * 1            0 0 9 * * 1            每周一早 9 点
+0 0,30 * * *        0 0 0,30 * * *         每 30 分钟
+```
+
+**为什么需要 6 字段**：`tokio-cron-scheduler` 内部要求第一字段为秒（0-59）。
+
+**标准 5 字段格式**：
 ```
 *  *  *  *  *
 │  │  │  │  └── 周 (0-7, 0=日, 7=日)
@@ -1421,6 +1388,21 @@ Routine 触发时，用户可能正在 REPL 中输入命令。使用 `eprintln!`
 - `0 8 * * 1-5`   — 周一至周五早 8 点
 - `0 */2 * * *`   — 每 2 小时
 - `30 9 1 * *`    — 每月 1 日早 9:30
+
+### 12.7 自然语言 schedule 解析
+
+用户可以输入自然语言时间描述，系统自动转换为 5 字段 cron：
+
+```
+用户输入                    解析结果
+─────────────────────────────────────────────────
+每1分钟提醒我喝水          0 * * * *          （每小时整点）
+每5分钟                   0,5,10,15,20,25,30,35,40,45,50,55 * * * *
+每天9点                   0 9 * * *
+每周一早上9点             0 9 * * 1
+```
+
+**实现方式**：优先判断输入是否为 5 字段 cron（直接使用），否则调用 LLM 解析为 5 字段 cron。不使用正则匹配，因为正则无法处理 "每1分钟提醒我喝水" 这类带任务描述的复杂输入。
 
 ---
 

@@ -33,11 +33,6 @@ impl AgentFactory {
             .ok_or_else(|| color_eyre::eyre::eyre!("Provider '{}' 未配置", provider_key))?;
 
         let raw_provider = crate::providers::create_provider(provider_config);
-        let retry_config = RetryConfig {
-            max_retries: self.config.reliability.max_retries,
-            initial_backoff_ms: self.config.reliability.initial_backoff_ms,
-            ..Default::default()
-        };
         let fallback_providers: Vec<Box<dyn crate::providers::Provider>> = self
             .config
             .reliability
@@ -46,6 +41,33 @@ impl AgentFactory {
             .filter_map(|name| self.config.providers.get(name))
             .map(|pc| crate::providers::create_provider(pc))
             .collect();
+        let retry_config = RetryConfig {
+            max_retries: self.config.reliability.max_retries,
+            initial_backoff_ms: self.config.reliability.initial_backoff_ms,
+            ..Default::default()
+        };
+
+        // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
+        let raw_provider_for_arc = crate::providers::create_provider(provider_config);
+        let provider_arc: Arc<dyn crate::providers::Provider> = if fallback_providers.is_empty() {
+            Arc::new(ReliableProvider::new(raw_provider_for_arc, retry_config.clone()))
+        } else {
+            let fallback_providers_arc: Vec<Box<dyn crate::providers::Provider>> = self
+                .config
+                .reliability
+                .fallback_providers
+                .iter()
+                .filter_map(|name| self.config.providers.get(name))
+                .map(|pc| crate::providers::create_provider(pc))
+                .collect();
+            Arc::new(ReliableProvider::with_fallbacks(
+                raw_provider_for_arc,
+                fallback_providers_arc,
+                retry_config.clone(),
+            ))
+        };
+
+        // Box<dyn Provider> 用于 Agent
         let provider: Box<dyn crate::providers::Provider> = if fallback_providers.is_empty() {
             Box::new(ReliableProvider::new(raw_provider, retry_config))
         } else {
@@ -55,6 +77,7 @@ impl AgentFactory {
                 retry_config,
             ))
         };
+
         let (data_dir, log_dir) = {
             let base_dirs = directories::BaseDirs::new()
                 .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
@@ -64,6 +87,7 @@ impl AgentFactory {
         let config_path = crate::config::Config::config_path()?;
         let tools = crate::tools::create_tools(
             self.config.clone(),
+            provider_arc,
             data_dir.clone(),
             log_dir,
             config_path,

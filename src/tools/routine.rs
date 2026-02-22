@@ -179,11 +179,15 @@ impl RoutineTool {
         };
 
         // 解析自然语言时间描述为 cron 表达式
-        // 先尝试正则解析，失败则用 LLM 兜底
-        let schedule = match crate::routines::parse_schedule_to_cron(&schedule_input) {
-            Ok(cron) => cron,
-            Err(_) => {
-                // LLM 兜底
+        // 优先判断是否已是 5 字段 cron，直接使用
+        // 否则直接用 LLM 解析（不用正则，正则无法处理"每1分钟提醒我喝水"这种复杂自然语言）
+        let schedule = {
+            let parts: Vec<&str> = schedule_input.split_whitespace().collect();
+            if parts.len() == 5 {
+                // 看起来像 cron（5字段），直接用
+                schedule_input.clone()
+            } else {
+                // 用 LLM 解析自然语言
                 match self.parse_schedule_with_llm(&schedule_input).await {
                     Ok(cron) => cron,
                     Err(llm_err) => {
@@ -191,8 +195,8 @@ impl RoutineTool {
                             success: false,
                             output: String::new(),
                             error: Some(format!(
-                                "schedule 解析失败。正则无法解析，且 LLM 错误: {}\n\
-                                 请直接使用 cron 表达式，如 '* * * * *'（每分钟）",
+                                "schedule 解析失败: {}\n\
+                                 请直接使用 5 字段 cron 表达式，如 '0 8 * * *'（每天早 8 点）或 '0 * * * *'（每小时）",
                                 llm_err
                             )),
                             ..Default::default()

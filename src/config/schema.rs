@@ -72,10 +72,18 @@ pub struct SecurityConfig {
     /// 设为 false 时完全跳过检测（适合完全信任所有工具输出的内部环境）
     #[serde(default = "default_injection_check")]
     pub injection_check: bool,
+    /// HTML 响应 strip 后的最大字节数（KB），超出则触发 mini-LLM 提取或截断
+    /// 默认 200（KB）；设为 0 禁用 strip（直接走原始 1MB 截断，旧行为）
+    #[serde(default = "default_http_strip_threshold_kb")]
+    pub http_strip_threshold_kb: usize,
 }
 
 fn default_injection_check() -> bool {
     true
+}
+
+fn default_http_strip_threshold_kb() -> usize {
+    200
 }
 
 /// 可靠性配置
@@ -207,6 +215,7 @@ impl Default for SecurityConfig {
             workspace_only: true,
             http_allowed_hosts: vec![],
             injection_check: true,
+            http_strip_threshold_kb: 200,
         }
     }
 }

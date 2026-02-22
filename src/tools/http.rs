@@ -4,9 +4,11 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
+use crate::providers::traits::{ChatMessage, ConversationMessage, Provider};
 use crate::security::SecurityPolicy;
 use super::traits::{Tool, ToolResult};
 
@@ -16,8 +18,32 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// 最大超时上限（秒）
 const MAX_TIMEOUT_SECS: u64 = 120;
+/// HTML strip 后的硬截断阈值（200KB，用于无 extract 参数时）
+const HTML_STRIP_MAX_BYTES: usize = 200 * 1024;
+/// mini-LLM 提取时输入内容的最大大小（150KB）
+const MINI_LLM_MAX_INPUT_BYTES: usize = 150 * 1024;
 
-pub struct HttpRequestTool;
+/// HTTP 请求工具
+/// 支持智能响应处理：HTML 自动 strip，大响应 mini-LLM 提取
+pub struct HttpRequestTool {
+    /// 用于 mini-LLM 提取；None 时跳过 B 阶段（降级为截断）
+    provider: Option<Arc<dyn Provider>>,
+    /// 模型名称（用于 mini-LLM 提取）
+    model: String,
+    /// HTML strip 后的阈值（bytes），0 = 禁用 strip
+    strip_threshold_bytes: usize,
+}
+
+impl HttpRequestTool {
+    /// 创建新的 HttpRequestTool
+    pub fn new(provider: Option<Arc<dyn Provider>>, model: String, strip_threshold_bytes: usize) -> Self {
+        Self {
+            provider,
+            model,
+            strip_threshold_bytes,
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for HttpRequestTool {
@@ -30,7 +56,11 @@ impl Tool for HttpRequestTool {
          支持自定义 headers、请求体。\
          仅允许 http/https，禁止访问内网/localhost/云元数据接口（SSRF 防护）。\
          不自动跟随重定向（3xx 响应会直接返回 Location header）。\
-         响应体最大 1MB，超出部分截断。"
+         响应处理：\
+         - JSON / 纯文本：直接返回，最大 1MB\
+         - HTML 页面：自动 strip 标签/脚本/样式，保留文字内容，最大 200KB\
+           - strip 后 ≤ 200KB：直接返回全部文字（适合文章、文档）\
+           - strip 后 > 200KB：若提供了 extract 参数则触发精准提取，否则截断并给出提示"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -59,6 +89,10 @@ impl Tool for HttpRequestTool {
                     "type": "integer",
                     "description": "超时秒数，默认 30，最大 120",
                     "default": 30
+                },
+                "extract": {
+                    "type": "string",
+                    "description": "（可选）当响应体较大时，指定要从中提取的目标信息。例如：\"当前股价和涨跌幅\"、\"文章正文\"、\"所有链接\"。仅在响应 strip 后仍超过 200KB 时触发 mini-LLM 提取；正常大小的响应直接返回全文，无需此参数。"
                 }
             },
             "required": ["url"]
@@ -257,6 +291,83 @@ impl Tool for HttpRequestTool {
             Err(_) => format!("<二进制响应，{} 字节>", body_len),
         };
 
+        // ========== A: Content-Type 感知处理 ==========
+        // 检测 Content-Type
+        let content_type = resp_headers
+            .iter()
+            .find(|h| h.to_lowercase().starts_with("content-type:"))
+            .map(|h| h.to_lowercase())
+            .unwrap_or_default();
+
+        let is_html = content_type.contains("text/html");
+
+        // HTML strip：去除所有标签，保留文字
+        let skip_strip = self.strip_threshold_bytes == 0;
+        let (processed_body, was_stripped) = if is_html && !body_str.is_empty() && !skip_strip {
+            // 使用 html2text 去除 HTML 标签，保留纯文本
+            let stripped = html2text::from_read(body_str.as_bytes(), 120);
+            (stripped, true)
+        } else {
+            (body_str, false)
+        };
+
+        // ========== B: 大小判断与路由 ==========
+        // 检查 strip 后是否超过阈值
+        let body_to_use = if was_stripped && processed_body.len() > self.strip_threshold_bytes {
+            let extract_hint = args.get("extract").and_then(|v| v.as_str());
+
+            match extract_hint {
+                Some(hint) => {
+                    // 有 extract 参数：走 mini-LLM 提取
+                    if let Some(ref provider) = self.provider {
+                        match mini_extract(&processed_body, hint, provider, &self.model).await {
+                            Ok(extracted) => {
+                                format!("[已通过 mini-LLM 提取]\n{}", extracted)
+                            }
+                            Err(e) => {
+                                // mini-LLM 失败，降级为截断
+                                warn!("http_request: mini_extract 失败: {}", e);
+                                let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                                format!(
+                                    "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n\n\
+                                     [提示] mini-LLM 提取失败: {}",
+                                    truncated, e
+                                )
+                            }
+                        }
+                    } else {
+                        // 无 provider：降级为截断
+                        let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                        format!(
+                            "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n{}\n\n\
+                             [提示] 页面 strip 后仍有 {}KB，可能是 SPA/动态页面。\
+                             如需精确提取，请在 http_request 中加 extract 参数，\
+                             例如：extract=\"目标信息描述\"",
+                            truncated,
+                            truncated,
+                            processed_body.len() / 1024
+                        )
+                    }
+                }
+                None => {
+                    // 无 extract 参数：截断到 200KB + 明确警告
+                    let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                    format!(
+                        "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n{}\n\n\
+                         [提示] 页面 strip 后仍有 {}KB，可能是 SPA/动态页面。\
+                         如需精确提取，请在 http_request 中加 extract 参数，\
+                         例如：extract=\"目标信息描述\"",
+                        truncated,
+                        truncated,
+                        processed_body.len() / 1024
+                    )
+                }
+            }
+        } else {
+            // 未超过阈值，或未 strip，直接返回
+            processed_body
+        };
+
         // 格式化输出
         let mut output = String::new();
         output.push_str(&status_line);
@@ -269,9 +380,10 @@ impl Tool for HttpRequestTool {
         }
 
         output.push_str("\n[Body]\n");
-        output.push_str(&body_str);
+        output.push_str(&body_to_use);
 
-        if truncated {
+        if truncated && !was_stripped {
+            // 原始响应被截断（未 strip 的情况）
             output.push_str(&format!(
                 "\n\n[响应体已截断：仅显示前 {} 字节]",
                 MAX_RESPONSE_BYTES
@@ -281,10 +393,11 @@ impl Tool for HttpRequestTool {
         let success = status.is_success();
 
         debug!(
-            "http_request 完成: status={}, body_len={}, truncated={}",
+            "http_request 完成: status={}, body_len={}, truncated={}, was_stripped={}",
             status.as_u16(),
             body_len,
-            truncated
+            truncated,
+            was_stripped
         );
 
         Ok(ToolResult {
@@ -298,6 +411,45 @@ impl Tool for HttpRequestTool {
             ..Default::default()
         })
     }
+}
+
+/// mini-LLM 提取函数
+async fn mini_extract(
+    content: &str,
+    hint: &str,
+    provider: &Arc<dyn Provider>,
+    model: &str,
+) -> Result<String> {
+    // 截取前 150KB 给 mini-LLM（避免超过模型 context 限制）
+    let content_excerpt = if content.len() > MINI_LLM_MAX_INPUT_BYTES {
+        &content[..MINI_LLM_MAX_INPUT_BYTES]
+    } else {
+        content
+    };
+
+    let messages = vec![
+        ConversationMessage::Chat(ChatMessage {
+            role: "system".to_string(),
+            content: "你是一个精准的信息提取助手。从给定内容中提取用户指定的信息，\
+                      只返回提取到的内容，不加解释，不加前缀。\
+                      如果找不到，返回\"未找到: {原因}\"。".to_string(),
+            reasoning_content: None,
+        }),
+        ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: format!(
+                "从以下内容中提取：{}\n\n---\n{}",
+                hint, content_excerpt
+            ),
+            reasoning_content: None,
+        }),
+    ];
+
+    let resp = provider
+        .chat_with_tools(&messages, &[], model, 0.0)
+        .await?;
+
+    Ok(resp.text.unwrap_or_else(|| "（提取结果为空）".to_string()))
 }
 
 /// 检查 host 是否有 SSRF 风险
@@ -417,7 +569,7 @@ mod tests {
 
     #[test]
     fn pre_validate_readonly_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({"url": "https://example.com"});
         let result = tool.pre_validate(&args, &readonly_policy());
         assert!(result.is_some());
@@ -426,7 +578,7 @@ mod tests {
 
     #[test]
     fn pre_validate_missing_url_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({});
         let result = tool.pre_validate(&args, &full_policy());
         assert!(result.is_some());
@@ -435,7 +587,7 @@ mod tests {
 
     #[test]
     fn pre_validate_invalid_url_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({"url": "not-a-url"});
         let result = tool.pre_validate(&args, &full_policy());
         assert!(result.is_some());
@@ -443,7 +595,7 @@ mod tests {
 
     #[test]
     fn pre_validate_file_scheme_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({"url": "file:///etc/passwd"});
         let result = tool.pre_validate(&args, &full_policy());
         assert!(result.is_some());
@@ -452,7 +604,7 @@ mod tests {
 
     #[test]
     fn pre_validate_ftp_scheme_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({"url": "ftp://example.com/file"});
         let result = tool.pre_validate(&args, &full_policy());
         assert!(result.is_some());
@@ -461,7 +613,7 @@ mod tests {
 
     #[test]
     fn pre_validate_localhost_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         for url in [
             "http://localhost/api",
             "http://localhost:8080/api",
@@ -476,7 +628,7 @@ mod tests {
 
     #[test]
     fn pre_validate_loopback_ip_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         for url in [
             "http://127.0.0.1/api",
             "http://127.1.2.3/secret",
@@ -490,7 +642,7 @@ mod tests {
 
     #[test]
     fn pre_validate_private_ip_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         for url in [
             "http://10.0.0.1/api",
             "http://192.168.1.100/api",
@@ -505,7 +657,7 @@ mod tests {
 
     #[test]
     fn pre_validate_metadata_ip_rejected() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({"url": "http://169.254.169.254/latest/meta-data/"});
         let result = tool.pre_validate(&args, &full_policy());
         assert!(result.is_some());
@@ -513,7 +665,7 @@ mod tests {
 
     #[test]
     fn pre_validate_public_url_allowed() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         for url in [
             "https://api.github.com/users/octocat",
             "http://httpbin.org/get",
@@ -559,7 +711,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "需要网络连接"]
     async fn execute_get_public_api() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({
             "url": "https://httpbin.org/get",
             "method": "GET"
@@ -573,7 +725,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "需要网络连接"]
     async fn execute_post_with_body() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({
             "url": "https://httpbin.org/post",
             "method": "POST",
@@ -588,7 +740,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "需要网络连接"]
     async fn execute_404_returns_error() {
-        let tool = HttpRequestTool;
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
         let args = serde_json::json!({
             "url": "https://httpbin.org/status/404"
         });
@@ -600,11 +752,23 @@ mod tests {
 
     #[test]
     fn tool_spec_correct() {
-        let spec = HttpRequestTool.spec();
+        let tool = HttpRequestTool::new(None, "test-model".to_string(), 200 * 1024);
+        let spec = tool.spec();
         assert_eq!(spec.name, "http_request");
         assert!(spec.parameters["required"]
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("url")));
+    }
+
+    // ─── HTML strip 测试 ───────────────────────────────────────────────
+
+    #[test]
+    fn html_strip_removes_tags() {
+        let html = "<html><head><script>var x=1</script></head><body><p>Hello</p></body></html>";
+        let stripped = html2text::from_read(html.as_bytes(), 120);
+        assert!(stripped.contains("Hello"));
+        assert!(!stripped.contains("<script>"));
+        assert!(!stripped.contains("<p>"));
     }
 }

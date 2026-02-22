@@ -106,16 +106,40 @@ async fn run_agent(
         ..Default::default()
     };
 
-    let provider: Box<dyn rrclaw::providers::Provider> =
+    // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
+    let provider_arc: Arc<dyn rrclaw::providers::Provider> =
         if fallback_providers.is_empty() {
-            Box::new(rrclaw::providers::ReliableProvider::new(
+            Arc::new(rrclaw::providers::ReliableProvider::new(
                 main_provider,
+                retry_config.clone(),
+            ))
+        } else {
+            Arc::new(rrclaw::providers::ReliableProvider::with_fallbacks(
+                main_provider,
+                fallback_providers,
+                retry_config.clone(),
+            ))
+        };
+
+    // Box<dyn Provider> 用于 Agent（重新创建，因为上面的 main_provider 和 fallback_providers 已移动）
+    let fallback_providers_for_box: Vec<Box<dyn rrclaw::providers::Provider>> = config
+        .reliability
+        .fallback_providers
+        .iter()
+        .filter_map(|name| config.providers.get(name))
+        .map(|pc| rrclaw::providers::create_provider(pc))
+        .collect();
+    let main_provider_for_box = rrclaw::providers::create_provider(provider_config);
+    let provider: Box<dyn rrclaw::providers::Provider> =
+        if fallback_providers_for_box.is_empty() {
+            Box::new(rrclaw::providers::ReliableProvider::new(
+                main_provider_for_box,
                 retry_config,
             ))
         } else {
             Box::new(rrclaw::providers::ReliableProvider::with_fallbacks(
-                main_provider,
-                fallback_providers,
+                main_provider_for_box,
+                fallback_providers_for_box,
                 retry_config,
             ))
         };
@@ -185,9 +209,10 @@ async fn run_agent(
     };
     // ─── RoutineEngine 初始化结束 ────────────────────────────────────────
 
-    // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills，MemoryTools 需要 memory）
+    // 创建 Tools（SelfInfoTool 需要 config 和路径信息，SkillTool 需要 skills，MemoryTools 需要 memory，HttpRequestTool 需要 provider）
     let mut tools = rrclaw::tools::create_tools(
         config.clone(),
+        provider_arc,
         data_dir.clone(),
         log_dir.clone(),
         config_path.clone(),

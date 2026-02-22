@@ -29,6 +29,25 @@ use tracing::{error, info, warn};
 use crate::config::Config;
 use crate::memory::Memory;
 
+// ─── 辅助函数 ─────────────────────────────────────────────────────────────────
+
+/// 将标准 5 字段 cron 转换为 tokio-cron-scheduler 需要的 6 字段格式
+/// 5 字段: 分 时 日 月 周
+/// 6 字段: 秒 分 时 日 月 周
+fn convert_5field_to_6field(cron: &str) -> String {
+    let parts: Vec<&str> = cron.split_whitespace().collect();
+    if parts.len() == 5 {
+        // 在前面加 "0 " 表示每分钟的第 0 秒触发
+        format!("0 {}", cron)
+    } else if parts.len() == 6 {
+        // 已经是 6 字段，直接返回
+        cron.to_string()
+    } else {
+        // 不是标准格式，返回原值让调度器报错
+        cron.to_string()
+    }
+}
+
 // ─── 数据结构 ─────────────────────────────────────────────────────────────────
 
 /// 单个定时任务的配置
@@ -98,6 +117,7 @@ pub struct RoutineExecution {
 pub struct RoutineEngine {
     routines: std::sync::RwLock<Vec<Routine>>,
     scheduler: JobScheduler,
+    scheduler_started: std::sync::Mutex<bool>,  // 跟踪调度器是否已启动
     config: Arc<Config>,
     memory: Arc<dyn Memory>,
     db: Arc<Mutex<Connection>>,
@@ -133,6 +153,7 @@ impl RoutineEngine {
         Ok(Self {
             routines: std::sync::RwLock::new(routines),
             scheduler,
+            scheduler_started: std::sync::Mutex::new(false),
             config,
             memory,
             db: Arc::new(Mutex::new(conn)),
@@ -205,7 +226,11 @@ impl RoutineEngine {
         let routine_name = routine.name.clone();
         let routine_schedule = routine.schedule.clone();
 
-        let job = Job::new_async(routine_schedule.as_str(), move |_uuid, _lock| {
+        // tokio-cron-scheduler 需要 6 字段 cron（秒 分 时 日 月 周）
+        // 自动将标准 5 字段转换
+        let schedule_with_seconds = convert_5field_to_6field(&routine_schedule);
+
+        let job = Job::new_async(schedule_with_seconds.as_str(), move |_uuid, _lock| {
             let engine = Arc::clone(&engine);
             let name = routine_name.clone();
             Box::pin(async move {
@@ -217,10 +242,31 @@ impl RoutineEngine {
         })
         .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
 
+        // 添加 job 到调度器
         self.scheduler
             .add(job)
             .await
             .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
+
+        // 如果调度器尚未启动，立即启动（处理启动时无 routine，后续添加的情况）
+        let should_start = {
+            let mut started = self.scheduler_started.lock().unwrap();
+            if !*started {
+                *started = true;
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_start {
+            info!("调度器尚未启动，现在启动...");
+            self.scheduler
+                .start()
+                .await
+                .map_err(|e| eyre!("启动 JobScheduler 失败: {}", e))?;
+            info!("调度器已启动");
+        }
 
         info!("已调度 Routine: {} (schedule={})", routine.name, routine.schedule);
         Ok(())
@@ -247,8 +293,11 @@ impl RoutineEngine {
             let routine_name = routine.name.clone();
             let routine_schedule = routine.schedule.clone();
 
+            // tokio-cron-scheduler 需要 6 字段 cron（秒 分 时 日 月 周）
+            let schedule_with_seconds = convert_5field_to_6field(&routine_schedule);
+
             // 构造 cron job（async handler）
-            let job = Job::new_async(routine_schedule.as_str(), move |_uuid, _lock| {
+            let job = Job::new_async(schedule_with_seconds.as_str(), move |_uuid, _lock| {
                 let engine = Arc::clone(&engine);
                 let name = routine_name.clone();
                 Box::pin(async move {
@@ -270,6 +319,9 @@ impl RoutineEngine {
             .start()
             .await
             .map_err(|e| eyre!("启动 JobScheduler 失败: {}", e))?;
+
+        // 标记调度器已启动
+        *self.scheduler_started.lock().unwrap() = true;
 
         info!("RoutineEngine 已启动，共 {} 个活跃任务", enabled_routines.len());
         Ok(())
@@ -454,9 +506,9 @@ impl RoutineEngine {
         let message = format!("\n[Routine: {}]\n{}\n", routine.name, output);
         match routine.channel.as_str() {
             "cli" => {
-                // 直接打印到 stdout
-                // 使用 eprintln 而非 println，避免干扰 reedline 的行编辑状态
+                // 使用 eprintln! 打印到 stderr，加分隔线让输出更清晰
                 eprintln!("{}", message);
+                eprintln!("─────────────────────────────────────────");
             }
             "telegram" => {
                 if self.config.telegram.is_some() {
