@@ -544,10 +544,43 @@ workspace_only = true
 
 什么算 trivial：单文件的小 bug fix、clippy 修复、文档 typo。其他都需要计划。
 
-### 文档驱动开发
-- 根目录 `CLAUDE.md` 作为总架构文档
-- 每个功能目录 `src/<module>/Claude.md` 作为子模块需求/设计文档
-- **代码改动流程**: 先更新对应 `Claude.md` → 写/更新测试 → 改代码 → 跑通测试 → 提交
+### 文档驱动开发（强制）
+
+**Claude.md 是代码的官方设计文档，必须与代码实现保持同步，不允许长期落后。**
+
+#### 文件职责
+
+- 根目录 `CLAUDE.md` — 总架构文档（trait 设计、安全模型、Agent Loop 流程）
+- `src/<module>/Claude.md` — 子模块设计文档（数据结构、公开 API、关键决策、测试要求）
+
+#### 代码改动流程（每次都要遵守）
+
+```
+更新对应 Claude.md → 写/更新测试 → 改代码 → 跑通测试 → 提交
+```
+
+**Claude.md 必须在代码 commit 之前更新**，不允许先改代码后补文档。
+
+#### 什么时候必须更新 Claude.md
+
+以下任一情况发生，对应模块的 Claude.md 必须同步更新：
+
+| 变更类型 | 必须更新的文档 |
+|----------|--------------|
+| 新增 struct / enum / trait | 对应模块 Claude.md 的数据结构节 |
+| 新增公开函数/方法 | 对应模块 Claude.md 的公开 API 节 |
+| 修改行为（包括 bug fix 改变语义） | 对应模块 Claude.md 的相关描述 |
+| 新增工具 | `src/tools/Claude.md` 工具清单 |
+| 新增斜杠命令 | `src/channels/Claude.md` 命令清单 |
+| 新增/修改 config 字段 | `src/config/Claude.md` 结构体节 |
+| 引入新的安全机制 | `src/security/Claude.md` |
+| 新增内置 skill | `src/skills/Claude.md` 内置 Skill 清单 |
+
+#### Phase 结束检查（强制）
+
+**每个 Phase（P4、P5…）完成后，必须做一次 Claude.md 全量同步检查**，确认所有受影响模块的文档已反映最新实现。未完成 Claude.md 同步，不允许声明该 Phase 完成。
+
+**教训**：P4/P5 结束后文档未同步，导致 P6 需要花一整个 session 补文档，且期间任何人读旧文档都会得到错误信息。
 
 ### 新引入外部库：必须先做 Spike（强制）
 
