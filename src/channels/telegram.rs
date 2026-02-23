@@ -131,7 +131,12 @@ pub async fn run_telegram(config: Config, memory: Arc<SqliteMemory>) -> Result<(
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("Telegram 未配置。请在 config.toml 中添加 [telegram] 配置。"))?;
 
-    let bot = Bot::new(&telegram_config.bot_token);
+    let bot_token = telegram_config
+        .bot_token
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("Telegram bot_token 未配置"))?;
+
+    let bot = Bot::new(bot_token);
     let allowed_ids: Vec<i64> = telegram_config.allowed_chat_ids.clone();
 
     let factory = Arc::new(AgentFactory::new(config, memory));

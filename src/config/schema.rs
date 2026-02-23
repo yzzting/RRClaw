@@ -26,9 +26,11 @@ pub struct Config {
 }
 
 /// Telegram Bot 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelegramConfig {
-    pub bot_token: String,
+    /// Bot Token（从 @BotFather 获取）
+    #[serde(default)]
+    pub bot_token: Option<String>,
     /// 允许的 chat ID 列表（空 = 允许所有）
     #[serde(default)]
     pub allowed_chat_ids: Vec<i64>,

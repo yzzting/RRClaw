@@ -567,9 +567,14 @@ impl RoutineEngine {
             .first()
             .ok_or_else(|| eyre!("Telegram allowed_chat_ids 为空，无法确定 Routine 结果发送对象。\n请在 config.toml 中设置 [telegram] allowed_chat_ids = [your_chat_id]"))?;
 
+        let bot_token = tg_config
+            .bot_token
+            .as_ref()
+            .ok_or_else(|| eyre!("Telegram bot_token 未配置"))?;
+
         let url = format!(
             "https://api.telegram.org/bot{}/sendMessage",
-            tg_config.bot_token
+            bot_token
         );
 
         let client = reqwest::Client::builder()
