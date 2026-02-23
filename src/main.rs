@@ -256,10 +256,10 @@ async fn run_agent(
 
     // ─── 身份文件加载（P5-2）────────────────────────────────────────────
     // identity 文件在 ~/.rrclaw/，而 data_dir 是 ~/.rrclaw/data/，取父目录
-    let rrclaw_home = data_dir.parent().unwrap_or(data_dir.as_path());
+    let rrclaw_home = data_dir.parent().unwrap_or(data_dir.as_path()).to_path_buf();
     let identity_context = rrclaw::agent::identity::load_identity_context(
         &policy.workspace_dir,
-        rrclaw_home,
+        &rrclaw_home,
     );
     if identity_context.is_some() {
         tracing::info!("已加载用户身份文件");
@@ -280,11 +280,37 @@ async fn run_agent(
         identity_context,
     );
 
+    // 检查是否配置了 Telegram
+    let telegram_config = config.telegram.clone();
+
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
-        // 传 rrclaw_home（~/.rrclaw/）而非 data_dir（~/.rrclaw/data/），供 /identity 命令使用
-        None => rrclaw::channels::cli::run_repl(&mut agent, &memory, &config, skills, rrclaw_home, routine_engine).await?,
+        None => {
+            if telegram_config.is_some() {
+                // 同时启动 CLI 和 Telegram
+                run_cli_with_telegram(
+                    &mut agent,
+                    &memory,
+                    &config,
+                    skills,
+                    rrclaw_home,
+                    routine_engine,
+                )
+                .await?;
+            } else {
+                // 只启动 CLI
+                rrclaw::channels::cli::run_repl(
+                    &mut agent,
+                    &memory,
+                    &config,
+                    skills,
+                    &rrclaw_home,
+                    routine_engine,
+                )
+                .await?;
+            }
+        }
     }
 
     // 退出时关闭 MCP 连接
@@ -293,6 +319,66 @@ async fn run_agent(
     }
 
     Ok(())
+}
+
+/// 同时运行 CLI REPL 和 Telegram Bot
+#[allow(clippy::too_many_arguments)]
+async fn run_cli_with_telegram(
+    agent: &mut rrclaw::agent::Agent,
+    memory: &Arc<rrclaw::memory::SqliteMemory>,
+    config: &rrclaw::config::Config,
+    skills: Vec<rrclaw::skills::SkillMeta>,
+    rrclaw_home: std::path::PathBuf,
+    routine_engine: Option<Arc<rrclaw::routines::RoutineEngine>>,
+) -> Result<()> {
+    const CYAN: &str = "\x1b[36m";
+    const RESET: &str = "\x1b[0m";
+    const YELLOW: &str = "\x1b[33m";
+
+    println!(
+        "{}RRClaw{} AI 助手 - CLI + Telegram 模式",
+        CYAN, RESET
+    );
+    println!("CLI: 直接输入消息");
+    println!("Telegram: 已启用，请向你的 Bot 发送消息");
+    println!("输入 {}exit{} 退出\n", YELLOW, RESET);
+
+    // 克隆必要的资源用于 Telegram
+    let tg_config = config.telegram.clone().unwrap();
+    let memory_clone = memory.clone();
+    let config_clone = config.clone();
+
+    // 启动 Telegram Bot 任务（后台运行）
+    let tg_handle = tokio::spawn(async move {
+        // Telegram Bot 使用独立的 AgentFactory（每个 chat 独立）
+        if let Err(e) = rrclaw::channels::telegram::run_telegram(
+            rrclaw::config::Config {
+                telegram: Some(tg_config),
+                ..config_clone
+            },
+            memory_clone,
+        )
+        .await
+        {
+            tracing::error!("Telegram Bot 运行错误: {:#}", e);
+        }
+    });
+
+    // 运行 CLI REPL（主任务）
+    let cli_result = rrclaw::channels::cli::run_repl(
+        agent,
+        memory,
+        config,
+        skills,
+        rrclaw_home.as_path(),
+        routine_engine,
+    )
+    .await;
+
+    // CLI 退出后，关闭 Telegram
+    tg_handle.abort();
+
+    cli_result
 }
 
 async fn run_telegram() -> Result<()> {

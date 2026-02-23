@@ -1,7 +1,10 @@
 pub mod cli;
 pub mod telegram;
+pub mod unified;
 
 use serde::{Deserialize, Serialize};
+
+pub use unified::{MessageSource, UnifiedMessage};
 
 /// 通道消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
