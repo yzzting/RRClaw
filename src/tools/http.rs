@@ -53,7 +53,7 @@ impl Tool for HttpRequestTool {
 
     fn description(&self) -> &str {
         "发起 HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD）。\
-         支持自定义 headers、请求体。\
+         支持自定义 headers、请求体。默认会自动添加 User-Agent 头。\
          仅允许 http/https，禁止访问内网/localhost/云元数据接口（SSRF 防护）。\
          不自动跟随重定向（3xx 响应会直接返回 Location header）。\
          响应处理：\
@@ -78,7 +78,7 @@ impl Tool for HttpRequestTool {
                 },
                 "headers": {
                     "type": "object",
-                    "description": "请求头，key-value 对象。如 {\"Authorization\": \"Bearer token\", \"Content-Type\": \"application/json\"}",
+                    "description": "请求头，key-value 对象。默认已包含 User-Agent，无需重复添加。如需认证：{\"Authorization\": \"Bearer token\", \"Content-Type\": \"application/json\"}",
                     "additionalProperties": {"type": "string"}
                 },
                 "body": {
@@ -183,6 +183,13 @@ impl Tool for HttpRequestTool {
 
         // 构建 headers
         let mut header_map = HeaderMap::new();
+
+        // 默认 User-Agent：避免 GitHub 等 API 返回 403
+        header_map.insert(
+            reqwest::header::USER_AGENT,
+            HeaderValue::from_static("RRClaw/1.0 (https://github.com/rrclaw/rrclaw)"),
+        );
+
         if let Some(headers_obj) = args.get("headers").and_then(|v| v.as_object()) {
             for (key, val) in headers_obj {
                 if let (Ok(name), Some(value)) = (
