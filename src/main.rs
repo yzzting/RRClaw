@@ -283,6 +283,15 @@ async fn run_agent(
     // 检查是否配置了 Telegram
     let telegram_config = config.telegram.clone();
 
+    // 创建 Telegram 运行时管理器
+    let telegram_runtime = Arc::new(rrclaw::channels::cli::TelegramRuntime::new());
+    if let Some(ref tg_cfg) = telegram_config {
+        telegram_runtime.set_config(rrclaw::config::Config {
+            telegram: Some(tg_cfg.clone()),
+            ..config.clone()
+        });
+    }
+
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
@@ -296,6 +305,7 @@ async fn run_agent(
                     skills,
                     rrclaw_home,
                     routine_engine,
+                    telegram_runtime,
                 )
                 .await?;
             } else {
@@ -307,6 +317,7 @@ async fn run_agent(
                     skills,
                     &rrclaw_home,
                     routine_engine,
+                    Some(telegram_runtime),
                 )
                 .await?;
             }
@@ -330,6 +341,7 @@ async fn run_cli_with_telegram(
     skills: Vec<rrclaw::skills::SkillMeta>,
     rrclaw_home: std::path::PathBuf,
     routine_engine: Option<Arc<rrclaw::routines::RoutineEngine>>,
+    telegram_runtime: Arc<rrclaw::channels::cli::TelegramRuntime>,
 ) -> Result<()> {
     const CYAN: &str = "\x1b[36m";
     const RESET: &str = "\x1b[0m";
@@ -372,6 +384,7 @@ async fn run_cli_with_telegram(
         skills,
         rrclaw_home.as_path(),
         routine_engine,
+        Some(telegram_runtime),
     )
     .await;
 

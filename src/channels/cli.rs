@@ -24,7 +24,122 @@ use crate::providers::{StreamEvent, ToolStatusKind};
 use crate::routines::{Routine, RoutineEngine, RoutineSource};
 use crate::skills::{load_skill_content, validate_skill_name, SkillMeta, SkillSource};
 
-/// 当天日期作为 session ID
+/// Telegram 运行时管理器
+/// 允许在运行时动态启动/停止 Telegram Bot
+pub struct TelegramRuntime {
+    /// Telegram Bot 任务句柄
+    handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// 当前是否正在运行
+    running: Mutex<bool>,
+    /// 配置（用于启动）
+    config: Mutex<Option<Config>>,
+}
+
+impl TelegramRuntime {
+    /// 创建新的 Telegram 运行时
+    pub fn new() -> Self {
+        Self {
+            handle: Mutex::new(None),
+            running: Mutex::new(false),
+            config: Mutex::new(None),
+        }
+    }
+
+    /// 设置配置（由主函数在启动时调用）
+    pub fn set_config(&self, config: Config) {
+        let mut cfg = self.config.lock().unwrap();
+        *cfg = Some(config);
+    }
+
+    /// 检查 Telegram 是否正在运行
+    pub fn is_running(&self) -> bool {
+        *self.running.lock().unwrap()
+    }
+
+    /// 启动 Telegram Bot
+    pub async fn start(&self, memory: Arc<SqliteMemory>) -> Result<()> {
+        // 检查是否已经在运行
+        if self.is_running() {
+            println!("Telegram Bot 已在运行中");
+            return Ok(());
+        }
+
+        // 获取配置
+        let config = {
+            let cfg = self.config.lock().unwrap();
+            cfg.clone().ok_or_else(|| eyre!("Telegram 未配置。请先在 config.toml 中添加 [telegram] 配置。"))?
+        };
+
+        let telegram_config = config.telegram.clone().ok_or_else(|| eyre!("Telegram 未配置"))?;
+
+        println!("正在启动 Telegram Bot...");
+
+        // 启动 Telegram Bot
+        let handle = tokio::spawn(async move {
+            if let Err(e) = crate::channels::telegram::run_telegram(
+                crate::config::Config {
+                    telegram: Some(telegram_config),
+                    ..config
+                },
+                memory,
+            )
+            .await
+            {
+                tracing::error!("Telegram Bot 运行错误: {:#}", e);
+            }
+        });
+
+        // 保存句柄
+        {
+            let mut h = self.handle.lock().unwrap();
+            *h = Some(handle);
+        }
+        {
+            let mut r = self.running.lock().unwrap();
+            *r = true;
+        }
+
+        println!("{}✓{} Telegram Bot 已启动", ansi::GREEN, ansi::RESET);
+        Ok(())
+    }
+
+    /// 停止 Telegram Bot
+    pub async fn stop(&self) -> Result<()> {
+        // 检查是否在运行
+        if !self.is_running() {
+            println!("Telegram Bot 未在运行");
+            return Ok(());
+        }
+
+        // 中止任务
+        {
+            let mut h = self.handle.lock().unwrap();
+            if let Some(handle) = h.take() {
+                handle.abort();
+            }
+        }
+
+        {
+            let mut r = self.running.lock().unwrap();
+            *r = false;
+        }
+
+        println!("{}✓{} Telegram Bot 已停止", ansi::GREEN, ansi::RESET);
+        Ok(())
+    }
+
+    /// 从配置重新加载（当配置被修改时调用）
+    pub fn reload_config(&self, config: Config) {
+        let mut cfg = self.config.lock().unwrap();
+        *cfg = Some(config);
+    }
+}
+
+impl Default for TelegramRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 fn today_session_id() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
@@ -94,17 +209,21 @@ pub fn setup_cli_confirm(agent: &mut Agent) {
 /// 运行 CLI REPL 交互循环（流式输出）
 pub async fn run_repl(
     agent: &mut Agent,
-    memory: &SqliteMemory,
+    memory: &Arc<SqliteMemory>,
     config: &Config,
     skills: Vec<SkillMeta>,
     data_dir: &std::path::Path,
     routine_engine: Option<Arc<RoutineEngine>>,
+    telegram_runtime: Option<Arc<TelegramRuntime>>,
 ) -> Result<()> {
+    // 克隆 memory 供 telegram 使用
+    let telegram_memory = Arc::clone(memory);
+    let telegram_runtime = telegram_runtime.map(|r| Arc::clone(&r));
     setup_cli_confirm(agent);
 
     // 加载今天的对话历史
     let session_id = today_session_id();
-    let history = memory.load_conversation_history(&session_id).await?;
+    let history = memory.as_ref().load_conversation_history(&session_id).await?;
     if !history.is_empty() {
         info!("恢复 {} 条对话历史 (session: {})", history.len(), session_id);
         println!("(已恢复 {} 条对话历史)", history.len());
@@ -162,7 +281,7 @@ pub async fn run_repl(
                 if let Some(cmd) = input.strip_prefix('/') {
                     if !cmd.contains('/') {
                         let workspace_dir = agent.policy().workspace_dir.clone();
-                        handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone()).await?;
+                        handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone(), telegram_runtime.clone(), Some(telegram_memory.clone())).await?;
                         continue;
                     }
                 }
@@ -208,12 +327,14 @@ async fn handle_slash_command(
     cmd: &str,
     agent: &mut Agent,
     session_id: &str,
-    memory: &SqliteMemory,
+    memory: &Arc<SqliteMemory>,
     config: &Config,
     skills: &[SkillMeta],
     data_dir: &std::path::Path,
     workspace_dir: std::path::PathBuf,
     routine_engine: Option<Arc<RoutineEngine>>,
+    telegram_runtime: Option<Arc<TelegramRuntime>>,
+    telegram_memory: Option<Arc<SqliteMemory>>,
 ) -> Result<()> {
     let name = cmd.split_whitespace().next().unwrap_or(cmd);
 
@@ -264,6 +385,15 @@ async fn handle_slash_command(
             // 切掉命令名，剩余部分作为参数
             let rest = cmd["routine".len()..].trim();
             cmd_routine(rest, routine_engine).await;
+        }
+        "telegram" => {
+            // 切掉命令名，剩余部分作为参数
+            let rest = cmd["telegram".len()..].trim();
+            if let (Some(runtime), Some(memory)) = (telegram_runtime, telegram_memory) {
+                cmd_telegram(rest, runtime, memory).await?;
+            } else {
+                println!("Telegram 运行时未初始化");
+            }
         }
         _ => {
             println!("未知命令: /{}。输入 /help 查看可用命令。", name);
@@ -1441,6 +1571,52 @@ fn cmd_mcp(agent: &Agent) {
             println!("    mcp_{}_{}", server, tool);
         }
     }
+}
+
+/// /telegram — 控制 Telegram Bot 启动/停止
+async fn cmd_telegram(
+    rest: &str,
+    runtime: Arc<TelegramRuntime>,
+    memory: Arc<SqliteMemory>,
+) -> Result<()> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    match parts.first() {
+        Some(&"start") | Some(&"enable") | Some(&"on") => {
+            runtime.start(memory.clone()).await?;
+        }
+        Some(&"stop") | Some(&"disable") | Some(&"off") => {
+            runtime.stop().await?;
+        }
+        Some(&"status") | Some(&"s") => {
+            if runtime.is_running() {
+                println!("{}✓{} Telegram Bot 运行中", ansi::GREEN, ansi::RESET);
+            } else {
+                println!("{}✗{} Telegram Bot 已停止", ansi::RED, ansi::RESET);
+            }
+        }
+        Some(&"reload") => {
+            // 重新加载配置
+            let config = crate::config::Config::load_or_init()
+                .wrap_err("加载配置失败")?;
+            runtime.reload_config(config);
+            println!("{}✓{} 配置已重新加载", ansi::GREEN, ansi::RESET);
+        }
+        _ => {
+            // 显示状态
+            if runtime.is_running() {
+                println!("Telegram Bot: {}运行中{}", ansi::GREEN, ansi::RESET);
+                println!("  /telegram stop   停止");
+            } else {
+                println!("Telegram Bot: {}已停止{}", ansi::RED, ansi::RESET);
+                println!("  /telegram start  启动（需先配置 [telegram]）");
+            }
+            println!("  /telegram status 查看状态");
+            println!("  /telegram reload 重新加载配置");
+        }
+    }
+
+    Ok(())
 }
 
 /// 打印帮助信息
