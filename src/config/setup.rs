@@ -57,16 +57,22 @@ pub fn find_provider_info(name: &str) -> Option<&'static ProviderInfo> {
 
 /// 运行交互式配置向导
 pub fn run_setup() -> Result<()> {
-    println!("🔧 RRClaw 配置向导\n");
+    // Detect language from OS locale (config doesn't exist yet at setup time)
+    let lang = crate::i18n::Language::from_locale();
+    if lang.is_english() {
+        println!("🔧 RRClaw Setup Wizard\n");
+    } else {
+        println!("🔧 RRClaw 配置向导\n");
+    }
 
     // 1. 选择 Provider
     let provider_names: Vec<&str> = PROVIDERS.iter().map(|p| p.name).collect();
     let provider_idx = Select::new()
-        .with_prompt("选择默认 Provider")
+        .with_prompt(if lang.is_english() { "Select default Provider" } else { "选择默认 Provider" })
         .items(&provider_names)
         .default(0)
         .interact()
-        .wrap_err("选择 Provider 失败")?;
+        .wrap_err(if lang.is_english() { "Failed to select provider" } else { "选择 Provider 失败" })?;
 
     let info = &PROVIDERS[provider_idx];
     println!();
@@ -75,11 +81,11 @@ pub fn run_setup() -> Result<()> {
     let api_key: String = Password::new()
         .with_prompt(format!("{} API Key", info.name))
         .interact()
-        .wrap_err("输入 API Key 失败")?;
+        .wrap_err(if lang.is_english() { "Failed to enter API Key" } else { "输入 API Key 失败" })?;
     println!();
 
     // 3. 选择模型
-    let model = select_model(info)?;
+    let model = select_model(info, lang)?;
     println!();
 
     // 4. 设置 temperature
@@ -87,17 +93,21 @@ pub fn run_setup() -> Result<()> {
         .with_prompt("Temperature (0.0-2.0)")
         .default(0.7)
         .interact_text()
-        .wrap_err("输入 temperature 失败")?;
+        .wrap_err(if lang.is_english() { "Failed to enter temperature" } else { "输入 temperature 失败" })?;
     println!();
 
     // 5. 选择安全模式
-    let autonomy_options = ["supervised (需确认后执行)", "full (自主执行)", "readonly (只读)"];
+    let autonomy_options = if lang.is_english() {
+        ["supervised (confirm before execution)", "full (autonomous)", "readonly (read-only)"]
+    } else {
+        ["supervised (需确认后执行)", "full (自主执行)", "readonly (只读)"]
+    };
     let autonomy_idx = Select::new()
-        .with_prompt("安全模式")
+        .with_prompt(if lang.is_english() { "Security mode" } else { "安全模式" })
         .items(autonomy_options)
         .default(0)
         .interact()
-        .wrap_err("选择安全模式失败")?;
+        .wrap_err(if lang.is_english() { "Failed to select security mode" } else { "选择安全模式失败" })?;
 
     let autonomy = match autonomy_idx {
         0 => AutonomyLevel::Supervised,
@@ -146,31 +156,36 @@ pub fn run_setup() -> Result<()> {
     let toml_str = toml_from_config(&config);
     std::fs::write(&config_path, &toml_str).wrap_err("写入配置文件失败")?;
 
-    println!("✅ 配置已保存到: {}", config_path.display());
-    println!("\n你可以随时编辑该文件添加更多 Provider 或调整设置。");
+    if lang.is_english() {
+        println!("✅ Config saved to: {}", config_path.display());
+        println!("\nYou can edit this file at any time to add more providers or adjust settings.");
+    } else {
+        println!("✅ 配置已保存到: {}", config_path.display());
+        println!("\n你可以随时编辑该文件添加更多 Provider 或调整设置。");
+    }
 
     Ok(())
 }
 
 /// 从 ProviderInfo 的模型列表中选择模型（含"自定义"选项）
-pub fn select_model(info: &ProviderInfo) -> Result<String> {
+pub fn select_model(info: &ProviderInfo, lang: crate::i18n::Language) -> Result<String> {
     let mut items: Vec<String> = info.models.iter().map(|m| m.to_string()).collect();
-    items.push("自定义...".to_string());
+    items.push(if lang.is_english() { "Custom...".to_string() } else { "自定义...".to_string() });
 
     let idx = Select::new()
-        .with_prompt("选择模型")
+        .with_prompt(if lang.is_english() { "Select model" } else { "选择模型" })
         .items(&items)
         .default(0)
         .interact()
-        .wrap_err("选择模型失败")?;
+        .wrap_err(if lang.is_english() { "Failed to select model" } else { "选择模型失败" })?;
 
     if idx < info.models.len() {
         Ok(info.models[idx].to_string())
     } else {
         let custom: String = Input::new()
-            .with_prompt("输入模型名称")
+            .with_prompt(if lang.is_english() { "Enter model name" } else { "输入模型名称" })
             .interact_text()
-            .wrap_err("输入模型名失败")?;
+            .wrap_err(if lang.is_english() { "Failed to enter model name" } else { "输入模型名失败" })?;
         Ok(custom)
     }
 }
