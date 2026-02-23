@@ -7,6 +7,16 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
+/// ANSI 颜色常量
+mod ansi {
+    pub const RESET: &str = "\x1b[0m";
+    pub const YELLOW: &str = "\x1b[33m";
+    pub const GREEN: &str = "\x1b[32m";
+    pub const RED: &str = "\x1b[31m";
+    pub const CYAN: &str = "\x1b[36m";
+    pub const DIM: &str = "\x1b[2m";
+}
+
 use crate::agent::Agent;
 use crate::config::{Config, ProviderConfig, PROVIDERS};
 use crate::memory::SqliteMemory;
@@ -122,7 +132,8 @@ pub async fn run_repl(
         DefaultPromptSegment::Empty,
     );
 
-    println!("RRClaw AI 助手 (输入 /help 查看命令, exit 退出)");
+    println!("{}RRClaw{} AI 助手 (输入 {} /help{} 查看命令, exit 退出)",
+        ansi::CYAN, ansi::RESET, ansi::YELLOW, ansi::RESET);
     println!();
 
     loop {
@@ -147,11 +158,13 @@ pub async fn run_repl(
                     _ => {}
                 }
 
-                // 斜杠命令
+                // 斜杠命令：/word 格式（不含额外斜杠，避免把 Unix 路径误识别为命令）
                 if let Some(cmd) = input.strip_prefix('/') {
-                    let workspace_dir = agent.policy().workspace_dir.clone();
-                    handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone()).await?;
-                    continue;
+                    if !cmd.contains('/') {
+                        let workspace_dir = agent.policy().workspace_dir.clone();
+                        handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone()).await?;
+                        continue;
+                    }
                 }
 
                 println!();
@@ -1489,7 +1502,7 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                         let mut i = 0;
                         while flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            print!("\r{} 思考中...", frames[i % frames.len()]);
+                            print!("\r{}{}思考中...{}", ansi::YELLOW, frames[i % frames.len()], ansi::RESET);
                             let _ = std::io::stdout().flush();
                             i += 1;
                             tokio::time::sleep(std::time::Duration::from_millis(80)).await;
@@ -1518,17 +1531,17 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                     }
                     match &status {
                         ToolStatusKind::Running(cmd) => {
-                            print!("\n⏳ {} ...", cmd);
+                            print!("\n{}⏳{} {} ...{}", ansi::YELLOW, ansi::RESET, cmd, ansi::DIM);
                             let _ = std::io::stdout().flush();
                         }
                         ToolStatusKind::Success(summary) => {
-                            println!(" ✓ {}", summary);
+                            println!("{}✓{} {}", ansi::GREEN, ansi::RESET, summary);
                         }
                         ToolStatusKind::Failed(err) => {
-                            println!(" ✗ {} 失败", name);
+                            println!("{}✗{} {} 失败", ansi::RED, ansi::RESET, name);
                             // 显示前几行错误详情
                             for line in err.lines().take(3) {
-                                println!("    {}", line);
+                                println!("{}    {}{}", ansi::RED, line, ansi::RESET);
                             }
                         }
                     }

@@ -7,6 +7,7 @@ const BUILTIN_CODE_REVIEW: &str = include_str!("builtin/code-review.md");
 const BUILTIN_RUST_DEV: &str = include_str!("builtin/rust-dev.md");
 const BUILTIN_GIT_COMMIT: &str = include_str!("builtin/git-commit.md");
 const BUILTIN_MCP_INSTALL: &str = include_str!("builtin/mcp-install.md");
+const BUILTIN_FIND_SKILLS: &str = include_str!("builtin/find-skills.md");
 
 /// Skill 来源（决定是否可删除、显示标签）
 #[derive(Debug, Clone, PartialEq)]
@@ -212,6 +213,7 @@ pub fn load_skill_content(name: &str, skills: &[SkillMeta]) -> Result<SkillConte
             "rust-dev" => BUILTIN_RUST_DEV,
             "git-commit" => BUILTIN_GIT_COMMIT,
             "mcp-install" => BUILTIN_MCP_INSTALL,
+            "find-skills" => BUILTIN_FIND_SKILLS,
             _ => return Err(eyre!("内置技能 '{}' 缺少内容", meta.name)),
         };
         let (_name, _desc, _tags, body) = parse_skill_md(raw)?;
@@ -265,6 +267,7 @@ pub fn builtin_skills() -> Vec<SkillMeta> {
         ("rust-dev", BUILTIN_RUST_DEV),
         ("git-commit", BUILTIN_GIT_COMMIT),
         ("mcp-install", BUILTIN_MCP_INSTALL),
+        ("find-skills", BUILTIN_FIND_SKILLS),
     ];
     for (key, content) in builtins {
         match parse_skill_md(content) {
@@ -469,14 +472,15 @@ mod tests {
     // --- builtin_skills 测试 ---
 
     #[test]
-    fn builtin_skills_returns_four() {
+    fn builtin_skills_returns_five() {
         let skills = builtin_skills();
-        assert_eq!(skills.len(), 4);
+        assert_eq!(skills.len(), 5);
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"code-review"));
         assert!(names.contains(&"rust-dev"));
         assert!(names.contains(&"git-commit"));
         assert!(names.contains(&"mcp-install"));
+        assert!(names.contains(&"find-skills"));
         // 所有内置 skill 都应有非空 description
         for s in &skills {
             assert!(!s.description.is_empty(), "skill '{}' description 为空", s.name);
