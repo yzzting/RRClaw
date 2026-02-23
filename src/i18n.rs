@@ -14,6 +14,7 @@ pub enum Language {
 impl Language {
     /// Parse from a config string value.
     /// Unknown values fall back to English.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.trim() {
             "zh" | "zh-CN" | "zh-TW" | "zh-Hans" | "zh-Hant" => Self::Chinese,

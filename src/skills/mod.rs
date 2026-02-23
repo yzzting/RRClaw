@@ -2,12 +2,21 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{eyre, Result};
 
-// 内置 skill 文件（编译时嵌入）
+use crate::i18n::Language;
+
+// 内置 skill 文件（编译时嵌入）— 中文版
 const BUILTIN_CODE_REVIEW: &str = include_str!("builtin/code-review.md");
 const BUILTIN_RUST_DEV: &str = include_str!("builtin/rust-dev.md");
 const BUILTIN_GIT_COMMIT: &str = include_str!("builtin/git-commit.md");
 const BUILTIN_MCP_INSTALL: &str = include_str!("builtin/mcp-install.md");
 const BUILTIN_FIND_SKILLS: &str = include_str!("builtin/find-skills.md");
+
+// 内置 skill 文件（编译时嵌入）— 英文版
+const BUILTIN_CODE_REVIEW_EN: &str = include_str!("builtin/code-review.en.md");
+const BUILTIN_RUST_DEV_EN: &str = include_str!("builtin/rust-dev.en.md");
+const BUILTIN_GIT_COMMIT_EN: &str = include_str!("builtin/git-commit.en.md");
+const BUILTIN_MCP_INSTALL_EN: &str = include_str!("builtin/mcp-install.en.md");
+const BUILTIN_FIND_SKILLS_EN: &str = include_str!("builtin/find-skills.en.md");
 
 /// Skill 来源（决定是否可删除、显示标签）
 #[derive(Debug, Clone, PartialEq)]
@@ -19,10 +28,22 @@ pub enum SkillSource {
 
 impl SkillSource {
     pub fn label(&self) -> &'static str {
-        match self {
-            SkillSource::BuiltIn => "[内置]",
-            SkillSource::Global => "[全局]",
-            SkillSource::Project => "[项目]",
+        self.label_for(Language::Chinese)
+    }
+
+    pub fn label_for(&self, lang: Language) -> &'static str {
+        if lang.is_english() {
+            match self {
+                SkillSource::BuiltIn => "[builtin]",
+                SkillSource::Global => "[global]",
+                SkillSource::Project => "[project]",
+            }
+        } else {
+            match self {
+                SkillSource::BuiltIn => "[内置]",
+                SkillSource::Global => "[全局]",
+                SkillSource::Project => "[项目]",
+            }
         }
     }
 }
@@ -188,33 +209,48 @@ pub fn load_skills(
 }
 
 /// 按需加载完整 skill 内容（L2 指令 + L3 文件清单）
-pub fn load_skill_content(name: &str, skills: &[SkillMeta]) -> Result<SkillContent> {
+pub fn load_skill_content(name: &str, skills: &[SkillMeta], lang: Language) -> Result<SkillContent> {
     let meta = skills
         .iter()
         .find(|s| s.name == name)
         .ok_or_else(|| {
             let available: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-            eyre!(
-                "未找到技能 '{}'。可用技能: {}",
-                name,
-                if available.is_empty() {
-                    "（无）".to_string()
-                } else {
-                    available.join(", ")
-                }
-            )
+            if lang.is_english() {
+                eyre!(
+                    "Skill '{}' not found. Available: {}",
+                    name,
+                    if available.is_empty() { "(none)".to_string() } else { available.join(", ") }
+                )
+            } else {
+                eyre!(
+                    "未找到技能 '{}'。可用技能: {}",
+                    name,
+                    if available.is_empty() { "（无）".to_string() } else { available.join(", ") }
+                )
+            }
         })?
         .clone();
 
-    // 内置 skill：从编译时嵌入的常量中读取
+    // 内置 skill：从编译时嵌入的常量中读取（按语言选择版本）
     let (instructions, resources) = if meta.source == SkillSource::BuiltIn {
-        let raw = match meta.name.as_str() {
-            "code-review" => BUILTIN_CODE_REVIEW,
-            "rust-dev" => BUILTIN_RUST_DEV,
-            "git-commit" => BUILTIN_GIT_COMMIT,
-            "mcp-install" => BUILTIN_MCP_INSTALL,
-            "find-skills" => BUILTIN_FIND_SKILLS,
-            _ => return Err(eyre!("内置技能 '{}' 缺少内容", meta.name)),
+        let raw = if lang.is_english() {
+            match meta.name.as_str() {
+                "code-review" => BUILTIN_CODE_REVIEW_EN,
+                "rust-dev" => BUILTIN_RUST_DEV_EN,
+                "git-commit" => BUILTIN_GIT_COMMIT_EN,
+                "mcp-install" => BUILTIN_MCP_INSTALL_EN,
+                "find-skills" => BUILTIN_FIND_SKILLS_EN,
+                _ => return Err(eyre!("Builtin skill '{}' has no content", meta.name)),
+            }
+        } else {
+            match meta.name.as_str() {
+                "code-review" => BUILTIN_CODE_REVIEW,
+                "rust-dev" => BUILTIN_RUST_DEV,
+                "git-commit" => BUILTIN_GIT_COMMIT,
+                "mcp-install" => BUILTIN_MCP_INSTALL,
+                "find-skills" => BUILTIN_FIND_SKILLS,
+                _ => return Err(eyre!("内置技能 '{}' 缺少内容", meta.name)),
+            }
         };
         let (_name, _desc, _tags, body) = parse_skill_md(raw)?;
         (body, vec![])
@@ -259,16 +295,26 @@ fn list_resources(dir: &Path) -> Vec<String> {
     resources
 }
 
-/// 加载内置 skills 的 L1 元数据
-pub fn builtin_skills() -> Vec<SkillMeta> {
+/// 加载内置 skills 的 L1 元数据（按语言选择 description）
+pub fn builtin_skills(lang: Language) -> Vec<SkillMeta> {
     let mut skills = Vec::new();
-    let builtins = [
-        ("code-review", BUILTIN_CODE_REVIEW),
-        ("rust-dev", BUILTIN_RUST_DEV),
-        ("git-commit", BUILTIN_GIT_COMMIT),
-        ("mcp-install", BUILTIN_MCP_INSTALL),
-        ("find-skills", BUILTIN_FIND_SKILLS),
-    ];
+    let builtins: &[(&str, &str)] = if lang.is_english() {
+        &[
+            ("code-review", BUILTIN_CODE_REVIEW_EN),
+            ("rust-dev", BUILTIN_RUST_DEV_EN),
+            ("git-commit", BUILTIN_GIT_COMMIT_EN),
+            ("mcp-install", BUILTIN_MCP_INSTALL_EN),
+            ("find-skills", BUILTIN_FIND_SKILLS_EN),
+        ]
+    } else {
+        &[
+            ("code-review", BUILTIN_CODE_REVIEW),
+            ("rust-dev", BUILTIN_RUST_DEV),
+            ("git-commit", BUILTIN_GIT_COMMIT),
+            ("mcp-install", BUILTIN_MCP_INSTALL),
+            ("find-skills", BUILTIN_FIND_SKILLS),
+        ]
+    };
     for (key, content) in builtins {
         match parse_skill_md(content) {
             Ok((name, description, tags, _body)) => {
@@ -473,7 +519,7 @@ mod tests {
 
     #[test]
     fn builtin_skills_returns_five() {
-        let skills = builtin_skills();
+        let skills = builtin_skills(Language::English);
         assert_eq!(skills.len(), 5);
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"code-review"));
@@ -487,22 +533,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn builtin_skills_english_descriptions_are_english() {
+        let skills = builtin_skills(Language::English);
+        for s in &skills {
+            // English descriptions should not contain Chinese characters
+            assert!(
+                !s.description.chars().any(|c| c as u32 > 0x4E00),
+                "skill '{}' English description contains Chinese: {}",
+                s.name, s.description
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_skills_chinese_descriptions_are_chinese() {
+        let skills = builtin_skills(Language::Chinese);
+        // At least one skill description should contain Chinese characters
+        let has_chinese = skills.iter().any(|s| s.description.chars().any(|c| c as u32 > 0x4E00));
+        assert!(has_chinese, "Chinese builtin skills should have Chinese descriptions");
+    }
+
     // --- load_skill_content 测试 ---
 
     #[test]
     fn load_builtin_skill_content() {
-        let skills = builtin_skills();
-        let content = load_skill_content("code-review", &skills).unwrap();
+        let skills = builtin_skills(Language::English);
+        let content = load_skill_content("code-review", &skills, Language::English).unwrap();
         assert_eq!(content.meta.name, "code-review");
         assert!(!content.instructions.is_empty());
         assert_eq!(content.meta.source, SkillSource::BuiltIn);
     }
 
     #[test]
+    fn load_builtin_skill_content_chinese() {
+        let skills = builtin_skills(Language::Chinese);
+        let content = load_skill_content("code-review", &skills, Language::Chinese).unwrap();
+        assert_eq!(content.meta.name, "code-review");
+        assert!(!content.instructions.is_empty());
+    }
+
+    #[test]
     fn load_unknown_skill_returns_error() {
-        let skills = builtin_skills();
-        let err = load_skill_content("nonexistent", &skills).unwrap_err();
-        assert!(err.to_string().contains("未找到技能"));
+        let skills = builtin_skills(Language::English);
+        let err = load_skill_content("nonexistent", &skills, Language::English).unwrap_err();
+        assert!(err.to_string().contains("not found") || err.to_string().contains("nonexistent"));
         assert!(err.to_string().contains("nonexistent"));
     }
 
@@ -512,7 +587,7 @@ mod tests {
         write_skill(tmp.path(), "test-skill", "测试技能，测试用。", "这是详细指令。");
 
         let skills = scan_skills_dir(tmp.path(), SkillSource::Global);
-        let content = load_skill_content("test-skill", &skills).unwrap();
+        let content = load_skill_content("test-skill", &skills, Language::English).unwrap();
         assert!(content.instructions.contains("这是详细指令。"));
     }
 }

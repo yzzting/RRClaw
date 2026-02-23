@@ -156,7 +156,7 @@ async fn run_agent(
             .ok_or_else(|| color_eyre::eyre::eyre!("无法获取 home 目录"))?;
         base_dirs.home_dir().join(".rrclaw").join("skills")
     };
-    let builtin = rrclaw::skills::builtin_skills();
+    let builtin = rrclaw::skills::builtin_skills(rrclaw::config::Config::get_language());
     let skills = rrclaw::skills::load_skills(&workspace_dir, &global_skills_dir, builtin);
 
     // 创建 Memory（Arc 共享给 Tools）

@@ -314,7 +314,7 @@ impl Agent {
         for name in skill_names {
             // 使用 src/skills/mod.rs 中的 load_skill_content(name, skills) -> Result<SkillContent>
             // SkillContent.instructions 是去除 frontmatter 后的正文
-            if let Ok(skill_content) = crate::skills::load_skill_content(name, &self.skills_meta) {
+            if let Ok(skill_content) = crate::skills::load_skill_content(name, &self.skills_meta, crate::config::Config::get_language()) {
                 content.push_str(&format!(
                     "\n\n---\n## Skill: {}\n{}",
                     name, skill_content.instructions
