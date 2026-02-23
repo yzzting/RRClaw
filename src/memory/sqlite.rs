@@ -24,36 +24,76 @@ pub struct SqliteMemory {
 }
 
 impl SqliteMemory {
-    /// 从文件路径创建（生产用）
+    /// 从文件路径创建（生产用）。
+    /// 根据 `Config::get_language()` 自动选择分词器：
+    /// - English → `en_stem`（英文词干还原，tantivy 内置）
+    /// - Chinese  → `jieba`（中文分词）
+    ///
+    /// 若分词器与上次启动不同，自动删除旧索引并重建（SQLite 数据保留）。
     pub fn open(data_dir: &Path) -> Result<Self> {
+        let lang = crate::config::Config::get_language();
+        let desired_tokenizer = if lang.is_english() { "en_stem" } else { "jieba" };
+        Self::open_with_tokenizer(data_dir, desired_tokenizer)
+    }
+
+    /// 内部实现：以指定分词器打开或创建索引（供生产和测试共用）。
+    fn open_with_tokenizer(data_dir: &Path, desired_tokenizer: &str) -> Result<Self> {
         std::fs::create_dir_all(data_dir).wrap_err("创建数据目录失败")?;
 
         let db_path = data_dir.join("memory.db");
         let db = Connection::open(&db_path).wrap_err("打开 SQLite 失败")?;
 
+        // 提前建 search_meta 表，用于读取上次使用的分词器
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS search_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .wrap_err("初始化 search_meta 表失败")?;
+
+        // 读取上次存储的分词器名称
+        let stored_tokenizer: Option<String> = db
+            .query_row(
+                "SELECT value FROM search_meta WHERE key = 'tokenizer'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
         let index_path = data_dir.join("search_index");
+
+        // 若分词器发生变更，删除旧索引以便重建（SQLite memories 表数据保留）
+        if stored_tokenizer.as_deref() != Some(desired_tokenizer) && index_path.exists() {
+            tracing::info!(
+                "Search tokenizer changed ({} → {}), rebuilding index",
+                stored_tokenizer.as_deref().unwrap_or("none"),
+                desired_tokenizer
+            );
+            std::fs::remove_dir_all(&index_path).wrap_err("删除旧搜索索引失败")?;
+        }
+
         std::fs::create_dir_all(&index_path).wrap_err("创建索引目录失败")?;
 
-        let (schema, key_field, content_field, category_field) = Self::build_schema();
+        let (schema, key_field, content_field, category_field) =
+            Self::build_schema(desired_tokenizer);
         let dir = tantivy::directory::MmapDirectory::open(&index_path)
             .wrap_err("打开 tantivy 目录失败")?;
         let index =
             Index::open_or_create(dir, schema.clone()).wrap_err("创建 tantivy 索引失败")?;
 
-        Self::finish_init(db, index, schema, key_field, content_field, category_field)
+        Self::finish_init(db, index, schema, key_field, content_field, category_field, desired_tokenizer)
     }
 
-    /// 从内存创建（测试用）
+    /// 从内存创建（测试用）。始终使用 jieba 以保持中文搜索测试兼容性。
     pub fn in_memory() -> Result<Self> {
         let db = Connection::open_in_memory().wrap_err("打开内存 SQLite 失败")?;
 
-        let (schema, key_field, content_field, category_field) = Self::build_schema();
+        let (schema, key_field, content_field, category_field) = Self::build_schema("jieba");
         let index = Index::create_in_ram(schema.clone());
 
-        Self::finish_init(db, index, schema, key_field, content_field, category_field)
+        Self::finish_init(db, index, schema, key_field, content_field, category_field, "jieba")
     }
 
-    fn build_schema() -> (Schema, Field, Field, Field) {
+    /// 构建 tantivy Schema，以 `tokenizer_name` 作为内容字段的分词器。
+    fn build_schema(tokenizer_name: &str) -> (Schema, Field, Field, Field) {
         let mut builder = Schema::builder();
 
         let key_field = builder.add_text_field("key", STRING | STORED);
@@ -61,7 +101,7 @@ impl SqliteMemory {
         let content_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
-                    .set_tokenizer("jieba")
+                    .set_tokenizer(tokenizer_name)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
@@ -79,11 +119,14 @@ impl SqliteMemory {
         key_field: Field,
         content_field: Field,
         category_field: Field,
+        tokenizer_name: &str,
     ) -> Result<Self> {
-        // 注册 jieba 分词器
-        index
-            .tokenizers()
-            .register("jieba", tantivy_jieba::JiebaTokenizer::new());
+        // jieba 需要显式注册；en_stem 是 tantivy 内置分词器，无需注册
+        if tokenizer_name == "jieba" {
+            index
+                .tokenizers()
+                .register("jieba", tantivy_jieba::JiebaTokenizer::new());
+        }
 
         let index_writer = index
             .writer(50_000_000) // 50MB heap
@@ -105,9 +148,21 @@ impl SqliteMemory {
                 payload TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_conv_session ON conversation_history(session_id);",
+            CREATE INDEX IF NOT EXISTS idx_conv_session ON conversation_history(session_id);
+            CREATE TABLE IF NOT EXISTS search_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         )
         .wrap_err("创建数据库表失败")?;
+
+        // 记录当前分词器名称，供下次启动对比
+        db.execute(
+            "INSERT INTO search_meta (key, value) VALUES ('tokenizer', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = ?1",
+            params![tokenizer_name],
+        )
+        .wrap_err("写入 tokenizer 元信息失败")?;
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -683,5 +738,98 @@ mod tests {
         let results = mem.recall("custom category", 10).await.unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].category, MemoryCategory::Custom("project_a".to_string()));
+    }
+
+    // ── P9-4: tokenizer selection tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn open_jieba_stores_tokenizer_in_search_meta() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = SqliteMemory::open_with_tokenizer(tmp.path(), "jieba").unwrap();
+
+        let db = Connection::open(tmp.path().join("memory.db")).unwrap();
+        let tok: String = db
+            .query_row(
+                "SELECT value FROM search_meta WHERE key = 'tokenizer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tok, "jieba");
+    }
+
+    #[tokio::test]
+    async fn open_en_stem_stores_tokenizer_in_search_meta() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
+
+        let db = Connection::open(tmp.path().join("memory.db")).unwrap();
+        let tok: String = db
+            .query_row(
+                "SELECT value FROM search_meta WHERE key = 'tokenizer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tok, "en_stem");
+    }
+
+    #[tokio::test]
+    async fn open_en_stem_can_recall_english_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
+
+        mem.store("prog", "programming with Rust is great", MemoryCategory::Core)
+            .await
+            .unwrap();
+        mem.store("cook", "cooking pasta for dinner tonight", MemoryCategory::Core)
+            .await
+            .unwrap();
+
+        // "program" should stem-match "programming"
+        let results = mem.recall("program Rust", 5).await.unwrap();
+        assert!(!results.is_empty(), "en_stem should recall stemmed English words");
+        assert_eq!(results[0].key, "prog");
+    }
+
+    #[tokio::test]
+    async fn tokenizer_change_rebuilds_index_and_preserves_sqlite_data() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // First open with jieba, store a memory
+        {
+            let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "jieba").unwrap();
+            mem.store("k1", "今天的会议讨论了计划", MemoryCategory::Core)
+                .await
+                .unwrap();
+            assert_eq!(mem.count().await.unwrap(), 1);
+        }
+
+        let index_path = tmp.path().join("search_index");
+        assert!(index_path.exists(), "index should exist after first open");
+
+        // Reopen with en_stem — should detect change, rebuild index
+        {
+            let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
+            // SQLite data is preserved even after index rebuild
+            assert_eq!(mem.count().await.unwrap(), 1, "SQLite data survives index rebuild");
+
+            // Verify the new tokenizer is now recorded in search_meta
+            let db = Connection::open(tmp.path().join("memory.db")).unwrap();
+            let tok: String = db
+                .query_row(
+                    "SELECT value FROM search_meta WHERE key = 'tokenizer'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(tok, "en_stem");
+        }
+
+        // Third open with same tokenizer — no rebuild, verify idempotent
+        {
+            let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
+            assert_eq!(mem.count().await.unwrap(), 1);
+        }
     }
 }
