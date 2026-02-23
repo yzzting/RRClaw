@@ -123,6 +123,7 @@ pub fn run_setup() -> Result<()> {
             provider: info.name.to_string(),
             model,
             temperature,
+            language: "en".to_string(),
         },
         providers,
         memory: MemoryConfig::default(),

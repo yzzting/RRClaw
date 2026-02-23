@@ -80,8 +80,57 @@ fn parse_route_result(text: &str) -> RouteResult {
     RouteResult::Direct
 }
 
-/// 构造 Phase 1 的 system prompt，极简
-fn build_routing_prompt(skills: &[SkillMeta]) -> String {
+/// 构造 Phase 1 的 system prompt，按语言分发
+fn build_routing_prompt(skills: &[SkillMeta], lang: crate::i18n::Language) -> String {
+    match lang {
+        crate::i18n::Language::English => build_routing_prompt_en(skills),
+        crate::i18n::Language::Chinese => build_routing_prompt_zh(skills),
+    }
+}
+
+fn build_routing_prompt_en(skills: &[SkillMeta]) -> String {
+    let mut prompt = String::new();
+
+    // [1] Identity
+    prompt.push_str("You are RRClaw's routing assistant. Your only job is to analyze the user's message and decide which behavior guides (skills) to load.\n\n");
+
+    // [2] Constraints (hard-coded, non-skippable)
+    prompt.push_str("[Constraints]\n");
+    prompt.push_str("- Do not call any tools\n");
+    prompt.push_str("- Output JSON only, no other text\n\n");
+
+    // [3] Available skills (L1 metadata)
+    if skills.is_empty() {
+        prompt.push_str("[Available Skills]\nNo skills available.\n\n");
+    } else {
+        prompt.push_str("[Available Skills]\n");
+        for skill in skills {
+            prompt.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+        }
+        prompt.push('\n');
+    }
+
+    // [4] Output format
+    prompt.push_str("[Output Format]\n");
+    prompt.push_str("Output valid JSON, one of three cases:\n\n");
+    prompt.push_str("1. Skills needed (clear intent, matching skill found):\n");
+    prompt.push_str("   {\"skills\": [\"skill-name\"], \"direct\": false}\n\n");
+    prompt.push_str("2. No skill needed, intent is clear:\n");
+    prompt.push_str("   {\"skills\": [], \"direct\": true}\n\n");
+    prompt.push_str("3. Intent unclear, need clarification (only when truly ambiguous):\n");
+    prompt.push_str("   {\"skills\": [], \"direct\": false, \"question\": \"your clarification question\"}\n\n");
+
+    // [5] Principles
+    prompt.push_str("[Principles]\n");
+    prompt.push_str("- When intent is clear, choose direct: true even if no skill matches\n");
+    prompt.push_str("- Skills are enhancements, not gates — don't ask the user when no skill matches\n");
+    prompt.push_str("- Only return a question when the intent is genuinely ambiguous and proceeding would go wrong\n");
+    prompt.push_str("- Use the same language as the user in the question field\n");
+
+    prompt
+}
+
+fn build_routing_prompt_zh(skills: &[SkillMeta]) -> String {
     let mut prompt = String::new();
 
     // [1] 身份
@@ -206,7 +255,8 @@ impl Agent {
 
     /// Phase 1 路由：调用轻量 LLM 决定需要加载哪些 skill
     async fn route(&self, user_message: &str) -> Result<RouteResult> {
-        let routing_prompt = build_routing_prompt(&self.skills_meta);
+        let lang = crate::config::Config::get_language();
+        let routing_prompt = build_routing_prompt(&self.skills_meta, lang);
 
         // 取最近 2 条纯文本历史（跳过 ToolCalls/ToolResults），
         // 让路由 LLM 理解对话上下文，避免对"方案B"/"继续"等短消息误判为 NeedClarification
@@ -919,8 +969,140 @@ impl Agent {
         }
     }
 
-    /// 构造 system prompt
+    /// 构造 system prompt，实时读取语言配置后分发到对应语言版本
     fn build_system_prompt(&self, memories: &[crate::memory::MemoryEntry]) -> String {
+        let lang = crate::config::Config::get_language();
+        match lang {
+            crate::i18n::Language::English => self.build_system_prompt_en(memories),
+            crate::i18n::Language::Chinese => self.build_system_prompt_zh(memories),
+        }
+    }
+
+    fn build_system_prompt_en(&self, memories: &[crate::memory::MemoryEntry]) -> String {
+        let mut parts = Vec::new();
+
+        // [0] Custom user context (identity file)
+        if let Some(identity) = &self.identity_context {
+            parts.push(format!("[Custom Context]\n{}", identity));
+        }
+
+        // [1] Identity
+        parts.push("You are RRClaw, a safety-first AI assistant.".to_string());
+
+        // [2] Available tools (filtered by Phase 1.5 routing; empty list = show all)
+        if !self.tools.is_empty() {
+            let mut tools_desc = "You can use the following tools:\n".to_string();
+
+            for tool in &self.tools {
+                if tool.name().starts_with("mcp_") {
+                    continue;
+                }
+                let is_active = self.routed_tool_names.is_empty()
+                    || self.routed_tool_names.iter().any(|n| n == tool.name())
+                    || tool.name() == "skill";
+                if is_active {
+                    tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+                }
+            }
+
+            let mcp_tools: Vec<_> = self.tools.iter()
+                .filter(|t| t.name().starts_with("mcp_"))
+                .collect();
+            if !mcp_tools.is_empty() {
+                tools_desc.push_str("\n[MCP Tools] (available on demand; full parameter schema is loaded automatically on first call):\n");
+                for tool in &mcp_tools {
+                    tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+                }
+            }
+
+            parts.push(tools_desc);
+        }
+
+        // [2.5] Available skills (L1 metadata, excluding SkillTool itself)
+        let display_skills: Vec<&SkillMeta> = self
+            .skills_meta
+            .iter()
+            .filter(|s| s.name != "skill")
+            .collect();
+        if !display_skills.is_empty() {
+            let mut skills_section =
+                "[Available Skills] (use the skill tool to load detailed instructions when needed)\n".to_string();
+            for skill in &display_skills {
+                skills_section.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+            }
+            parts.push(skills_section);
+        }
+
+        // [3] Security rules
+        let security_rules = match self.policy.autonomy {
+            AutonomyLevel::ReadOnly => "Read-only mode: do not attempt to call any tools.",
+            AutonomyLevel::Supervised => concat!(
+                "Supervised mode: call tools directly. ",
+                "The system will automatically prompt the user for confirmation before execution. ",
+                "Do not ask for confirmation in your text — just issue the tool call."
+            ),
+            AutonomyLevel::Full => "Full mode: you can execute tools autonomously within the allowed-commands list.",
+        };
+        parts.push(security_rules.to_string());
+
+        // [4] Memory context
+        if !memories.is_empty() {
+            let mut memory_section = "[Relevant Memories]\n".to_string();
+            for entry in memories {
+                memory_section.push_str(&format!("- {}\n", entry.content));
+            }
+            parts.push(memory_section);
+        }
+
+        // [4.5] Routed skill L2 behavior guide (Phase 1 result, reset each turn)
+        if let Some(skill_content) = &self.routed_skill_content {
+            parts.push(format!("[Behavior Guide]\n{}", skill_content));
+        }
+
+        // [4.6] Routine execution rules (only in routine mode)
+        if let Some(name) = &self.routine_name {
+            parts.push(format!(
+                "[Routine Execution Rules]\n\
+                 You are executing scheduled task '{name}'. This is an automated task with no user interaction.\n\
+                 - If the message starts with [Previously successful approach], try that approach first\n\
+                 - After completing the task successfully, record the effective method with memory_store:\n\
+                 \x20 - key: \"routine:{name}:approach\"\n\
+                 \x20 - category: \"custom\"\n\
+                 \x20 - content: describe the successful method (URL, headers, data extraction path, etc.)\n\
+                 - If you find a better method, overwrite the existing record\n\
+                 - Do not update the record on failure",
+                name = name,
+            ));
+        }
+
+        // [5] Environment info
+        let workspace = self.policy.workspace_dir.display();
+        let env_info = format!(
+            "Working directory: {}\nCurrent time: {}",
+            workspace,
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        );
+        parts.push(env_info);
+
+        // [6] Decision principles
+        parts.push(concat!(
+            "[Decision Principles]\n",
+            "1. Check before acting: use self_info to query uncertain info (paths, config, capabilities) — don't guess\n",
+            "2. Ask when stuck: if you can't find or infer the answer, ask the user directly\n",
+            "3. Explain intent: briefly explain why you need a tool before calling it\n",
+            "4. Reflect on failure: analyze root cause before retrying\n",
+            "   - 1st failure: analyze cause, try a different approach\n",
+            "   - 2nd failure: explain the situation to the user and ask for guidance\n",
+            "   - Don't attempt the same goal more than 3 times\n",
+            "5. Reply in the user's language\n",
+            "6. Use memory: store user preferences with memory_store when told; use memory_recall when unsure if something was discussed before\n",
+            "7. When HTTP requests are blocked by SSRF protection: explain the situation to the user and ask if they want to add the address to the allowlist. After agreement, use the config tool to add it (e.g., set security.http_allowed_hosts to [\"localhost\"]), then retry",
+        ).to_string());
+
+        parts.join("\n\n")
+    }
+
+    fn build_system_prompt_zh(&self, memories: &[crate::memory::MemoryEntry]) -> String {
         let mut parts = Vec::new();
 
         // [0] 用户定制上下文（身份文件）
@@ -935,7 +1117,6 @@ impl Agent {
         if !self.tools.is_empty() {
             let mut tools_desc = "你可以使用以下工具:\n".to_string();
 
-            // 内置工具：完整描述（路由激活时只显示相关工具，skill 工具始终显示）
             for tool in &self.tools {
                 if tool.name().starts_with("mcp_") {
                     continue;
@@ -948,7 +1129,6 @@ impl Agent {
                 }
             }
 
-            // MCP 工具：L1 简介（需要时自动升级为完整参数）
             let mcp_tools: Vec<_> = self.tools.iter()
                 .filter(|t| t.name().starts_with("mcp_"))
                 .collect();
@@ -963,7 +1143,6 @@ impl Agent {
         }
 
         // [2.5] 可用技能列表（L1 元数据，仅当有 skills 时注入）
-        // 排除 SkillTool 自身（它已在 [2] 工具描述中）
         let display_skills: Vec<&SkillMeta> = self
             .skills_meta
             .iter()
@@ -1019,7 +1198,7 @@ impl Agent {
             ));
         }
 
-        // [5] 环境信息（精简，详情通过 self_info 工具查询）
+        // [5] 环境信息
         let workspace = self.policy.workspace_dir.display();
         let env_info = format!(
             "工作目录: {}\n当前时间: {}",
@@ -1028,7 +1207,7 @@ impl Agent {
         );
         parts.push(env_info);
 
-        // [6] 决策原则（替代原"行为准则"+"工具结果格式"，教模型怎么决策）
+        // [6] 决策原则
         parts.push(concat!(
             "[决策原则]\n",
             "1. 先查后做: 不确定的信息（路径、配置、能力）先用 self_info 工具查询，不要猜测\n",
@@ -1588,15 +1767,15 @@ mod tests {
             Some(identity),
         );
         let prompt = agent.build_system_prompt(&[]);
-        // identity 内容应出现在 prompt 中
+        // identity 内容应出现在 prompt 中（tests use English, section label is "[Custom Context]"）
         assert!(prompt.contains("你是专属助手 Max"));
-        assert!(prompt.contains("[用户定制上下文]"));
+        assert!(prompt.contains("[Custom Context]"));
         // identity 段应在 RRClaw 身份描述之前
-        let identity_pos = prompt.find("[用户定制上下文]").unwrap();
+        let identity_pos = prompt.find("[Custom Context]").unwrap();
         let rrclaw_pos = prompt.find("RRClaw").unwrap();
         assert!(
             identity_pos < rrclaw_pos,
-            "[用户定制上下文] 应在 RRClaw 描述之前，identity_pos={}, rrclaw_pos={}",
+            "[Custom Context] should appear before RRClaw description, identity_pos={}, rrclaw_pos={}",
             identity_pos,
             rrclaw_pos
         );
@@ -1617,6 +1796,8 @@ mod tests {
             None,
         );
         let prompt = agent.build_system_prompt(&[]);
+        // Neither English nor Chinese identity section should appear
+        assert!(!prompt.contains("[Custom Context]"));
         assert!(!prompt.contains("[用户定制上下文]"));
     }
 
@@ -1657,11 +1838,11 @@ mod tests {
             None,
         );
         let prompt = agent.build_system_prompt(&[]);
-        // 新决策原则应包含关键条目
-        assert!(prompt.contains("先查后做"));
-        assert!(prompt.contains("不知道就问"));
+        // Tests run in English mode — check English decision principle keywords
+        assert!(prompt.contains("Check before acting"));
+        assert!(prompt.contains("Ask when stuck"));
         assert!(prompt.contains("self_info"));
-        // 旧的冗长内容应该已移除
+        // Legacy verbose sections should be absent
         assert!(!prompt.contains("[工具结果格式]"));
         assert!(!prompt.contains("[行为准则]"));
         assert!(!prompt.contains("Shell 命令白名单"));
@@ -2131,34 +2312,43 @@ mod tests {
     #[test]
     fn build_routing_prompt_no_tools() {
         let skills = vec![];
-        let prompt = build_routing_prompt(&skills);
-        // Phase 1 prompt 不包含工具 schema
+        // English version
+        let prompt = build_routing_prompt(&skills, crate::i18n::Language::English);
         assert!(!prompt.contains("shell"));
         assert!(!prompt.contains("file_read"));
         assert!(prompt.contains("JSON"));
+        // Chinese version
+        let prompt_zh = build_routing_prompt(&skills, crate::i18n::Language::Chinese);
+        assert!(prompt_zh.contains("JSON"));
     }
 
     #[test]
     fn build_routing_prompt_contains_skill_names() {
-        // SkillMeta 的实际字段：name, description, tags, source, path（无 content_hash）
-        // SkillSource 枚举值为 BuiltIn（大写 I），不是 Builtin
         let skills = vec![SkillMeta {
             name: "git-commit".to_string(),
-            description: "Git 提交规范（用户提到提交代码时加载）".to_string(),
+            description: "Git commit workflow".to_string(),
             tags: vec![],
             source: SkillSource::BuiltIn,
             path: None,
         }];
-        let prompt = build_routing_prompt(&skills);
+        // English
+        let prompt = build_routing_prompt(&skills, crate::i18n::Language::English);
         assert!(prompt.contains("git-commit"));
-        assert!(prompt.contains("Git 提交规范"));
+        assert!(prompt.contains("Git commit workflow"));
+        // Chinese
+        let prompt_zh = build_routing_prompt(&skills, crate::i18n::Language::Chinese);
+        assert!(prompt_zh.contains("git-commit"));
     }
 
     #[test]
     fn build_routing_prompt_empty_skills() {
         let skills = vec![];
-        let prompt = build_routing_prompt(&skills);
-        assert!(prompt.contains("暂无可用 skill"));
+        // English: "No skills available"
+        let prompt = build_routing_prompt(&skills, crate::i18n::Language::English);
+        assert!(prompt.contains("No skills available"));
+        // Chinese: "暂无可用 skill"
+        let prompt_zh = build_routing_prompt(&skills, crate::i18n::Language::Chinese);
+        assert!(prompt_zh.contains("暂无可用 skill"));
     }
 
     #[test]
@@ -2385,17 +2575,19 @@ mod tests {
         let mut agent = make_agent_no_skills();
         agent.set_routine_name("tesla_stock_monitor".to_string());
         let prompt = agent.build_system_prompt(&[]);
-        assert!(prompt.contains("[Routine 执行规范]"), "应包含 Routine 规范段");
-        assert!(prompt.contains("tesla_stock_monitor"), "应包含 Routine 名称");
-        assert!(prompt.contains("memory_store"), "应包含 memory_store 指令");
-        assert!(prompt.contains("routine:tesla_stock_monitor:approach"), "应包含正确的 key");
+        // Tests run in English mode
+        assert!(prompt.contains("[Routine Execution Rules]"), "should contain routine rules section");
+        assert!(prompt.contains("tesla_stock_monitor"), "should contain routine name");
+        assert!(prompt.contains("memory_store"), "should contain memory_store instruction");
+        assert!(prompt.contains("routine:tesla_stock_monitor:approach"), "should contain correct key");
     }
 
     #[test]
     fn routine_system_prompt_absent_in_normal_mode() {
         let agent = make_agent_no_skills();
         let prompt = agent.build_system_prompt(&[]);
-        assert!(!prompt.contains("[Routine 执行规范]"), "普通模式不应含 Routine 规范段");
+        assert!(!prompt.contains("[Routine Execution Rules]"), "normal mode should not contain routine rules");
+        assert!(!prompt.contains("[Routine 执行规范]"), "normal mode should not contain routine rules (zh)");
     }
 
     #[test]
@@ -2404,8 +2596,9 @@ mod tests {
         agent.set_routine_name("first".to_string());
         agent.set_routine_name("second".to_string());
         let prompt = agent.build_system_prompt(&[]);
-        assert!(prompt.contains("second"), "应包含最新的 routine 名称");
-        assert!(!prompt.contains("first"), "不应包含旧的 routine 名称");
+        assert!(prompt.contains("second"), "should contain current routine name");
+        // Check the routine name specifically in context, not as any substring
+        assert!(!prompt.contains("task 'first'"), "should not contain old routine name in task context");
     }
 
     // --- summarize_history 测试 ---

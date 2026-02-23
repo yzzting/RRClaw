@@ -39,6 +39,7 @@ pub fn test_config() -> Arc<Config> {
             provider: "test".to_string(),
             model: "test-model".to_string(),
             temperature: 0.0,
+            language: "en".to_string(),
         },
         providers,
         reliability: ReliabilityConfig {

@@ -250,6 +250,7 @@ mod tests {
                 provider: "deepseek".to_string(),
                 model: "deepseek-chat".to_string(),
                 temperature: 0.7,
+                language: "en".to_string(),
             },
             providers,
             memory: MemoryConfig::default(),

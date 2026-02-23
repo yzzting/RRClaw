@@ -42,6 +42,15 @@ pub struct DefaultConfig {
     pub provider: String,
     pub model: String,
     pub temperature: f64,
+    /// Interface language: "en" (default) or "zh"
+    /// Controls system prompt language, CLI messages, and builtin skill language.
+    /// Does NOT affect LLM reply language (always follows the user's message language).
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "en".to_string()
 }
 
 /// 单个 Provider 的连接配置
@@ -190,6 +199,7 @@ impl Default for DefaultConfig {
             provider: "deepseek".to_string(),
             model: "deepseek-chat".to_string(),
             temperature: 0.7,
+            language: default_language(),
         }
     }
 }
@@ -227,6 +237,7 @@ const DEFAULT_CONFIG_TOML: &str = r#"[default]
 provider = "deepseek"
 model = "deepseek-chat"
 temperature = 0.7
+language = "en"     # Interface language: "en" or "zh"
 
 # 在下方添加你的 Provider 配置
 # [providers.deepseek]
@@ -298,6 +309,36 @@ impl Config {
                 }
             }
             vec![]
+        }
+    }
+
+    /// 实时读取 config.toml 中的 language 字段（无需重启即可热生效）
+    /// 失败时回退到 LANG 环境变量推断
+    pub fn get_language() -> crate::i18n::Language {
+        #[cfg(test)]
+        {
+            return crate::i18n::Language::English;
+        }
+        #[cfg(not(test))]
+        {
+            let config_path = match Self::config_path() {
+                Ok(p) => p,
+                Err(_) => return crate::i18n::Language::from_locale(),
+            };
+            let content = match std::fs::read_to_string(&config_path) {
+                Ok(c) => c,
+                Err(_) => return crate::i18n::Language::from_locale(),
+            };
+            let doc = match content.parse::<toml_edit::DocumentMut>() {
+                Ok(d) => d,
+                Err(_) => return crate::i18n::Language::from_locale(),
+            };
+            let lang_str = doc
+                .get("default")
+                .and_then(|d| d.get("language"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            crate::i18n::Language::detect(lang_str)
         }
     }
 
