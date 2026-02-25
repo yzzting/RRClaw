@@ -37,7 +37,9 @@ impl ClaudeProvider {
     }
 
     /// 从 messages 中提取 system prompt，返回 (system_text, 非system消息)
-    fn extract_system(messages: &[ConversationMessage]) -> (Option<String>, Vec<serde_json::Value>) {
+    fn extract_system(
+        messages: &[ConversationMessage],
+    ) -> (Option<String>, Vec<serde_json::Value>) {
         let mut system_parts = Vec::new();
         let mut claude_messages = Vec::new();
 
@@ -53,7 +55,9 @@ impl ClaudeProvider {
                         }));
                     }
                 }
-                ConversationMessage::AssistantToolCalls { text, tool_calls, .. } => {
+                ConversationMessage::AssistantToolCalls {
+                    text, tool_calls, ..
+                } => {
                     let mut content = Vec::new();
                     if let Some(text) = text {
                         content.push(serde_json::json!({
@@ -179,7 +183,11 @@ impl ClaudeProvider {
             Some(text_parts.join(""))
         };
 
-        ChatResponse { text, reasoning_content: None, tool_calls }
+        ChatResponse {
+            text,
+            reasoning_content: None,
+            tool_calls,
+        }
     }
 }
 
@@ -195,7 +203,10 @@ impl Provider for ClaudeProvider {
         let body = Self::build_request_body(messages, tools, model, temperature, false);
 
         debug!("Claude API 请求: {} model={}", self.endpoint(), model);
-        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        trace!(
+            "请求体: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
 
         let resp = self
             .client
@@ -236,7 +247,10 @@ impl Provider for ClaudeProvider {
         let body = Self::build_request_body(messages, tools, model, temperature, true);
 
         debug!("Claude API 流式请求: {} model={}", self.endpoint(), model);
-        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        trace!(
+            "请求体: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
 
         let resp = self
             .client
@@ -324,7 +338,11 @@ impl Provider for ClaudeProvider {
                             Some("input_json_delta") => {
                                 if let Some(partial) = delta["partial_json"].as_str() {
                                     current_tool_input.push_str(partial);
-                                    let idx = if tool_calls.is_empty() { 0 } else { tool_calls.len() - 1 };
+                                    let idx = if tool_calls.is_empty() {
+                                        0
+                                    } else {
+                                        tool_calls.len() - 1
+                                    };
                                     let _ = tx
                                         .send(StreamEvent::ToolCallDelta {
                                             index: idx,
@@ -362,7 +380,11 @@ impl Provider for ClaudeProvider {
             Some(text_parts.join(""))
         };
 
-        let response = ChatResponse { text, reasoning_content: None, tool_calls };
+        let response = ChatResponse {
+            text,
+            reasoning_content: None,
+            tool_calls,
+        };
         let _ = tx.send(StreamEvent::Done(response.clone())).await;
 
         debug!(

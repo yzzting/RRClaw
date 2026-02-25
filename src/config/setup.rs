@@ -1,7 +1,10 @@
 use color_eyre::eyre::{Context, Result};
 use dialoguer::{Input, Password, Select};
 
-use super::schema::{Config, DefaultConfig, MemoryConfig, ProviderConfig, ReliabilityConfig, RoutinesConfig, SecurityConfig};
+use super::schema::{
+    Config, DefaultConfig, MemoryConfig, ProviderConfig, ReliabilityConfig, RoutinesConfig,
+    SecurityConfig,
+};
 use crate::security::AutonomyLevel;
 
 /// 已知 Provider 信息（名称、默认 base_url、已知模型列表、认证方式）
@@ -68,11 +71,19 @@ pub fn run_setup() -> Result<()> {
     // 1. 选择 Provider
     let provider_names: Vec<&str> = PROVIDERS.iter().map(|p| p.name).collect();
     let provider_idx = Select::new()
-        .with_prompt(if lang.is_english() { "Select default Provider" } else { "选择默认 Provider" })
+        .with_prompt(if lang.is_english() {
+            "Select default Provider"
+        } else {
+            "选择默认 Provider"
+        })
         .items(&provider_names)
         .default(0)
         .interact()
-        .wrap_err(if lang.is_english() { "Failed to select provider" } else { "选择 Provider 失败" })?;
+        .wrap_err(if lang.is_english() {
+            "Failed to select provider"
+        } else {
+            "选择 Provider 失败"
+        })?;
 
     let info = &PROVIDERS[provider_idx];
     println!();
@@ -81,7 +92,11 @@ pub fn run_setup() -> Result<()> {
     let api_key: String = Password::new()
         .with_prompt(format!("{} API Key", info.name))
         .interact()
-        .wrap_err(if lang.is_english() { "Failed to enter API Key" } else { "输入 API Key 失败" })?;
+        .wrap_err(if lang.is_english() {
+            "Failed to enter API Key"
+        } else {
+            "输入 API Key 失败"
+        })?;
     println!();
 
     // 3. 选择模型
@@ -93,21 +108,41 @@ pub fn run_setup() -> Result<()> {
         .with_prompt("Temperature (0.0-2.0)")
         .default(0.7)
         .interact_text()
-        .wrap_err(if lang.is_english() { "Failed to enter temperature" } else { "输入 temperature 失败" })?;
+        .wrap_err(if lang.is_english() {
+            "Failed to enter temperature"
+        } else {
+            "输入 temperature 失败"
+        })?;
     println!();
 
     // 5. 选择安全模式
     let autonomy_options = if lang.is_english() {
-        ["supervised (confirm before execution)", "full (autonomous)", "readonly (read-only)"]
+        [
+            "supervised (confirm before execution)",
+            "full (autonomous)",
+            "readonly (read-only)",
+        ]
     } else {
-        ["supervised (需确认后执行)", "full (自主执行)", "readonly (只读)"]
+        [
+            "supervised (需确认后执行)",
+            "full (自主执行)",
+            "readonly (只读)",
+        ]
     };
     let autonomy_idx = Select::new()
-        .with_prompt(if lang.is_english() { "Security mode" } else { "安全模式" })
+        .with_prompt(if lang.is_english() {
+            "Security mode"
+        } else {
+            "安全模式"
+        })
         .items(autonomy_options)
         .default(0)
         .interact()
-        .wrap_err(if lang.is_english() { "Failed to select security mode" } else { "选择安全模式失败" })?;
+        .wrap_err(if lang.is_english() {
+            "Failed to select security mode"
+        } else {
+            "选择安全模式失败"
+        })?;
 
     let autonomy = match autonomy_idx {
         0 => AutonomyLevel::Supervised,
@@ -170,22 +205,42 @@ pub fn run_setup() -> Result<()> {
 /// 从 ProviderInfo 的模型列表中选择模型（含"自定义"选项）
 pub fn select_model(info: &ProviderInfo, lang: crate::i18n::Language) -> Result<String> {
     let mut items: Vec<String> = info.models.iter().map(|m| m.to_string()).collect();
-    items.push(if lang.is_english() { "Custom...".to_string() } else { "自定义...".to_string() });
+    items.push(if lang.is_english() {
+        "Custom...".to_string()
+    } else {
+        "自定义...".to_string()
+    });
 
     let idx = Select::new()
-        .with_prompt(if lang.is_english() { "Select model" } else { "选择模型" })
+        .with_prompt(if lang.is_english() {
+            "Select model"
+        } else {
+            "选择模型"
+        })
         .items(&items)
         .default(0)
         .interact()
-        .wrap_err(if lang.is_english() { "Failed to select model" } else { "选择模型失败" })?;
+        .wrap_err(if lang.is_english() {
+            "Failed to select model"
+        } else {
+            "选择模型失败"
+        })?;
 
     if idx < info.models.len() {
         Ok(info.models[idx].to_string())
     } else {
         let custom: String = Input::new()
-            .with_prompt(if lang.is_english() { "Enter model name" } else { "输入模型名称" })
+            .with_prompt(if lang.is_english() {
+                "Enter model name"
+            } else {
+                "输入模型名称"
+            })
             .interact_text()
-            .wrap_err(if lang.is_english() { "Failed to enter model name" } else { "输入模型名失败" })?;
+            .wrap_err(if lang.is_english() {
+                "Failed to enter model name"
+            } else {
+                "输入模型名失败"
+            })?;
         Ok(custom)
     }
 }
@@ -230,7 +285,10 @@ fn toml_from_config(config: &Config) -> String {
         .map(|c| format!("\"{}\"", c))
         .collect();
     lines.push(format!("allowed_commands = [{}]", cmds.join(", ")));
-    lines.push(format!("workspace_only = {}", config.security.workspace_only));
+    lines.push(format!(
+        "workspace_only = {}",
+        config.security.workspace_only
+    ));
     lines.push(String::new());
 
     lines.join("\n")

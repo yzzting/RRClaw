@@ -26,15 +26,24 @@ pub struct RoutineTool {
 }
 
 impl RoutineTool {
-    pub fn new(engine: Arc<RoutineEngine>, provider: Option<Arc<dyn Provider>>, model: String) -> Self {
-        Self { engine, provider, model }
+    pub fn new(
+        engine: Arc<RoutineEngine>,
+        provider: Option<Arc<dyn Provider>>,
+        model: String,
+    ) -> Self {
+        Self {
+            engine,
+            provider,
+            model,
+        }
     }
 
     /// 用 LLM 将自然语言 schedule 转换为 cron 表达式
     async fn parse_schedule_with_llm(&self, desc: &str) -> Result<String> {
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            eyre!("无 LLM 可用。请直接使用 cron 表达式。")
-        })?;
+        let provider = self
+            .provider
+            .as_ref()
+            .ok_or_else(|| eyre!("无 LLM 可用。请直接使用 cron 表达式。"))?;
 
         let messages = vec![
             ConversationMessage::Chat(ChatMessage {
@@ -49,7 +58,8 @@ impl RoutineTool {
                          - \"每20秒\" → \"* * * * *\"\
                          - \"半小时一次\" → \"*/30 * * * *\"\
                          - \"每天9点\" → \"0 9 * * *\"\
-                         - \"每周一早上9点\" → \"0 9 * * 1\"".to_string(),
+                         - \"每周一早上9点\" → \"0 9 * * 1\""
+                    .to_string(),
                 reasoning_content: None,
             }),
             ConversationMessage::Chat(ChatMessage {
@@ -150,7 +160,10 @@ impl Tool for RoutineTool {
             other => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("未知 action: {}。可用：create/list/delete/enable/disable/run/logs", other)),
+                error: Some(format!(
+                    "未知 action: {}。可用：create/list/delete/enable/disable/run/logs",
+                    other
+                )),
                 ..Default::default()
             }),
         }
@@ -161,21 +174,25 @@ impl RoutineTool {
     async fn action_create(&self, args: &Value) -> Result<ToolResult> {
         let name = match args.get("name").and_then(|v| v.as_str()) {
             Some(n) if !n.is_empty() => n.to_string(),
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("create 操作需要 name 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("create 操作需要 name 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
         let schedule_input = match args.get("schedule").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s.to_string(),
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("create 操作需要 schedule 参数（5 字段 cron 表达式）".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("create 操作需要 schedule 参数（5 字段 cron 表达式）".to_string()),
+                    ..Default::default()
+                })
+            }
         };
 
         // 解析自然语言时间描述为 cron 表达式
@@ -207,14 +224,17 @@ impl RoutineTool {
         };
         let message = match args.get("message").and_then(|v| v.as_str()) {
             Some(m) if !m.is_empty() => m.to_string(),
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("create 操作需要 message 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("create 操作需要 message 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
-        let channel = args.get("channel")
+        let channel = args
+            .get("channel")
             .and_then(|v| v.as_str())
             .unwrap_or("cli")
             .to_string();
@@ -231,7 +251,10 @@ impl RoutineTool {
         match self.engine.clone().persist_add_routine(&routine).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("✓ 已创建定时任务 '{}'（{}）。list/run 立即可用。", name, schedule),
+                output: format!(
+                    "✓ 已创建定时任务 '{}'（{}）。list/run 立即可用。",
+                    name, schedule
+                ),
                 error: None,
                 ..Default::default()
             }),
@@ -275,12 +298,14 @@ impl RoutineTool {
     async fn action_delete(&self, args: &Value) -> Result<ToolResult> {
         let name = match args.get("name").and_then(|v| v.as_str()) {
             Some(n) if !n.is_empty() => n,
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("delete 操作需要 name 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("delete 操作需要 name 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
         match self.engine.persist_delete_routine(name).await {
             Ok(()) => Ok(ToolResult {
@@ -331,12 +356,14 @@ impl RoutineTool {
     async fn action_run(&self, args: &Value) -> Result<ToolResult> {
         let name = match args.get("name").and_then(|v| v.as_str()) {
             Some(n) if !n.is_empty() => n.to_string(),
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("run 操作需要 name 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("run 操作需要 name 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
         match self.engine.execute_routine(&name).await {
             Ok(output) => Ok(ToolResult {
@@ -355,9 +382,7 @@ impl RoutineTool {
     }
 
     async fn action_logs(&self, args: &Value) -> Result<ToolResult> {
-        let limit = args.get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(5) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         let logs = self.engine.get_recent_logs(limit).await;
         if logs.is_empty() {
@@ -372,8 +397,15 @@ impl RoutineTool {
         let mut lines = vec![format!("最近 {} 条执行记录：", logs.len())];
         for log in &logs {
             let status = if log.success { "成功" } else { "失败" };
-            let started = if log.started_at.len() >= 19 { &log.started_at[..19] } else { &log.started_at };
-            lines.push(format!("{} | {} | {} | {}", started, log.routine_name, status, log.output_preview));
+            let started = if log.started_at.len() >= 19 {
+                &log.started_at[..19]
+            } else {
+                &log.started_at
+            };
+            lines.push(format!(
+                "{} | {} | {} | {}",
+                started, log.routine_name, status, log.output_preview
+            ));
             if let Some(err) = &log.error {
                 lines.push(format!("  错误: {}", err));
             }
@@ -417,7 +449,8 @@ mod tests {
     #[test]
     fn routine_tool_description_contains_cron_examples() {
         // 验证 description 包含 cron 示例，确保 LLM 能够理解 schedule 格式
-        let desc = "管理定时任务（Routines）。支持创建、列出、删除、启用/禁用、手动触发、查看日志。";
+        let desc =
+            "管理定时任务（Routines）。支持创建、列出、删除、启用/禁用、手动触发、查看日志。";
         assert!(desc.contains("Routines"));
     }
 }

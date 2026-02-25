@@ -1,4 +1,4 @@
-use color_eyre::eyre::{Context, Result, eyre};
+use color_eyre::eyre::{eyre, Context, Result};
 use dialoguer::{Confirm, Input, Select};
 use reedline::{DefaultPrompt, DefaultPromptSegment, ExternalPrinter, Reedline, Signal};
 use std::collections::HashSet;
@@ -12,7 +12,11 @@ use crate::i18n::Language;
 /// 返回当前语言对应的字符串（静态字符串选择）
 #[inline]
 fn t(lang: Language, zh: &'static str, en: &'static str) -> &'static str {
-    if lang.is_english() { en } else { zh }
+    if lang.is_english() {
+        en
+    } else {
+        zh
+    }
 }
 
 /// ANSI 颜色常量
@@ -69,7 +73,14 @@ impl TelegramRuntime {
         let lang = crate::config::Config::get_language();
         // 检查是否已经在运行
         if self.is_running() {
-            println!("{}", t(lang, "Telegram Bot 已在运行中", "Telegram Bot is already running"));
+            println!(
+                "{}",
+                t(
+                    lang,
+                    "Telegram Bot 已在运行中",
+                    "Telegram Bot is already running"
+                )
+            );
             return Ok(());
         }
 
@@ -85,9 +96,15 @@ impl TelegramRuntime {
             })?
         };
 
-        let telegram_config = config.telegram.clone().ok_or_else(|| eyre!("Telegram 未配置"))?;
+        let telegram_config = config
+            .telegram
+            .clone()
+            .ok_or_else(|| eyre!("Telegram 未配置"))?;
 
-        println!("{}", t(lang, "正在启动 Telegram Bot...", "Starting Telegram Bot..."));
+        println!(
+            "{}",
+            t(lang, "正在启动 Telegram Bot...", "Starting Telegram Bot...")
+        );
 
         // 启动 Telegram Bot
         let handle = tokio::spawn(async move {
@@ -115,7 +132,12 @@ impl TelegramRuntime {
         }
 
         let lang = crate::config::Config::get_language();
-        println!("{}✓{} {}", ansi::GREEN, ansi::RESET, t(lang, "Telegram Bot 已启动", "Telegram Bot started"));
+        println!(
+            "{}✓{} {}",
+            ansi::GREEN,
+            ansi::RESET,
+            t(lang, "Telegram Bot 已启动", "Telegram Bot started")
+        );
         Ok(())
     }
 
@@ -124,7 +146,10 @@ impl TelegramRuntime {
         let lang = crate::config::Config::get_language();
         // 检查是否在运行
         if !self.is_running() {
-            println!("{}", t(lang, "Telegram Bot 未在运行", "Telegram Bot is not running"));
+            println!(
+                "{}",
+                t(lang, "Telegram Bot 未在运行", "Telegram Bot is not running")
+            );
             return Ok(());
         }
 
@@ -141,7 +166,12 @@ impl TelegramRuntime {
             *r = false;
         }
 
-        println!("{}✓{} {}", ansi::GREEN, ansi::RESET, t(lang, "Telegram Bot 已停止", "Telegram Bot stopped"));
+        println!(
+            "{}✓{} {}",
+            ansi::GREEN,
+            ansi::RESET,
+            t(lang, "Telegram Bot 已停止", "Telegram Bot stopped")
+        );
         Ok(())
     }
 
@@ -253,9 +283,16 @@ pub async fn run_repl(
     // 加载今天的对话历史
     let lang = crate::config::Config::get_language();
     let session_id = today_session_id();
-    let history = memory.as_ref().load_conversation_history(&session_id).await?;
+    let history = memory
+        .as_ref()
+        .load_conversation_history(&session_id)
+        .await?;
     if !history.is_empty() {
-        info!("恢复 {} 条对话历史 (session: {})", history.len(), session_id);
+        info!(
+            "恢复 {} 条对话历史 (session: {})",
+            history.len(),
+            session_id
+        );
         if lang.is_english() {
             println!("(Restored {} conversation message(s))", history.len());
         } else {
@@ -286,11 +323,21 @@ pub async fn run_repl(
     );
 
     if lang.is_english() {
-        println!("{}RRClaw{} AI assistant (type {} /help{} for commands, exit to quit)",
-            ansi::CYAN, ansi::RESET, ansi::YELLOW, ansi::RESET);
+        println!(
+            "{}RRClaw{} AI assistant (type {} /help{} for commands, exit to quit)",
+            ansi::CYAN,
+            ansi::RESET,
+            ansi::YELLOW,
+            ansi::RESET
+        );
     } else {
-        println!("{}RRClaw{} AI 助手 (输入 {} /help{} 查看命令, exit 退出)",
-            ansi::CYAN, ansi::RESET, ansi::YELLOW, ansi::RESET);
+        println!(
+            "{}RRClaw{} AI 助手 (输入 {} /help{} 查看命令, exit 退出)",
+            ansi::CYAN,
+            ansi::RESET,
+            ansi::YELLOW,
+            ansi::RESET
+        );
     }
     println!();
 
@@ -311,7 +358,11 @@ pub async fn run_repl(
                         break;
                     }
                     "clear" => {
-                        line_editor.clear_scrollback().wrap_err(t(lang, "清屏失败", "Failed to clear screen"))?;
+                        line_editor.clear_scrollback().wrap_err(t(
+                            lang,
+                            "清屏失败",
+                            "Failed to clear screen",
+                        ))?;
                         continue;
                     }
                     _ => {}
@@ -321,7 +372,20 @@ pub async fn run_repl(
                 if let Some(cmd) = input.strip_prefix('/') {
                     if !cmd.contains('/') {
                         let workspace_dir = agent.policy().workspace_dir.clone();
-                        handle_slash_command(cmd, agent, &session_id, memory, config, &skills, data_dir, workspace_dir, routine_engine.clone(), telegram_runtime.clone(), Some(telegram_memory.clone())).await?;
+                        handle_slash_command(
+                            cmd,
+                            agent,
+                            &session_id,
+                            memory,
+                            config,
+                            &skills,
+                            data_dir,
+                            workspace_dir,
+                            routine_engine.clone(),
+                            telegram_runtime.clone(),
+                            Some(telegram_memory.clone()),
+                        )
+                        .await?;
                         continue;
                     }
                 }
@@ -436,13 +500,23 @@ async fn handle_slash_command(
                 cmd_telegram(rest, runtime, memory).await?;
             } else {
                 let lang = crate::config::Config::get_language();
-                println!("{}", t(lang, "Telegram 运行时未初始化", "Telegram runtime not initialized"));
+                println!(
+                    "{}",
+                    t(
+                        lang,
+                        "Telegram 运行时未初始化",
+                        "Telegram runtime not initialized"
+                    )
+                );
             }
         }
         _ => {
             let lang = crate::config::Config::get_language();
             if lang.is_english() {
-                println!("Unknown command: /{}. Type /help for available commands.", name);
+                println!(
+                    "Unknown command: /{}. Type /help for available commands.",
+                    name
+                );
             } else {
                 println!("未知命令: /{}。输入 /help 查看可用命令。", name);
             }
@@ -470,7 +544,10 @@ fn cmd_skill(rest: &str, agent: &mut Agent, skills: &[SkillMeta]) -> Result<()> 
                 Ok(content) => {
                     agent.inject_skill_context(name, &content.instructions);
                     if lang.is_english() {
-                        println!("✓ Skill loaded: {} (instructions injected into conversation)", name);
+                        println!(
+                            "✓ Skill loaded: {} (instructions injected into conversation)",
+                            name
+                        );
                     } else {
                         println!("✓ 已加载技能: {}（指令已注入对话）", name);
                     }
@@ -499,7 +576,12 @@ fn cmd_skill_list(skills: &[SkillMeta]) {
     }
     println!("{}\n", t(lang, "可用技能:", "Available skills:"));
     for s in skills {
-        println!("  {} {} — {}", s.source.label_for(lang), s.name, s.description);
+        println!(
+            "  {} {} — {}",
+            s.source.label_for(lang),
+            s.name,
+            s.description
+        );
     }
     println!();
     if lang.is_english() {
@@ -521,7 +603,11 @@ fn cmd_skill_list(skills: &[SkillMeta]) {
 fn cmd_skill_new(name: Option<&str>) -> Result<()> {
     let lang = crate::config::Config::get_language();
     let name = name.ok_or_else(|| {
-        if lang.is_english() { eyre!("Usage: /skill new <name>") } else { eyre!("用法: /skill new <name>") }
+        if lang.is_english() {
+            eyre!("Usage: /skill new <name>")
+        } else {
+            eyre!("用法: /skill new <name>")
+        }
     })?;
     validate_skill_name(name)?;
 
@@ -530,7 +616,10 @@ fn cmd_skill_new(name: Option<&str>) -> Result<()> {
 
     if skill_dir.exists() {
         if lang.is_english() {
-            println!("Skill '{}' already exists. Use /skill edit {} to edit.", name, name);
+            println!(
+                "Skill '{}' already exists. Use /skill edit {} to edit.",
+                name, name
+            );
         } else {
             println!("技能 '{}' 已存在。使用 /skill edit {} 编辑。", name, name);
         }
@@ -570,7 +659,11 @@ fn cmd_skill_new(name: Option<&str>) -> Result<()> {
 fn cmd_skill_edit(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
     let lang = crate::config::Config::get_language();
     let name = name.ok_or_else(|| {
-        if lang.is_english() { eyre!("Usage: /skill edit <name>") } else { eyre!("用法: /skill edit <name>") }
+        if lang.is_english() {
+            eyre!("Usage: /skill edit <name>")
+        } else {
+            eyre!("用法: /skill edit <name>")
+        }
     })?;
 
     let skill_path = find_editable_skill_path(name, skills)?;
@@ -581,7 +674,14 @@ fn cmd_skill_edit(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
         .status()
         .wrap_err_with(|| format!("启动编辑器 '{}' 失败", editor))?;
 
-    println!("{}", t(lang, "✓ 编辑完成。重启 rrclaw 后技能列表会刷新。", "✓ Done. Restart rrclaw to refresh the skill list."));
+    println!(
+        "{}",
+        t(
+            lang,
+            "✓ 编辑完成。重启 rrclaw 后技能列表会刷新。",
+            "✓ Done. Restart rrclaw to refresh the skill list."
+        )
+    );
     Ok(())
 }
 
@@ -589,25 +689,34 @@ fn cmd_skill_edit(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
 fn cmd_skill_delete(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
     let lang = crate::config::Config::get_language();
     let name = name.ok_or_else(|| {
-        if lang.is_english() { eyre!("Usage: /skill delete <name>") } else { eyre!("用法: /skill delete <name>") }
+        if lang.is_english() {
+            eyre!("Usage: /skill delete <name>")
+        } else {
+            eyre!("用法: /skill delete <name>")
+        }
     })?;
 
-    let skill = skills
-        .iter()
-        .find(|s| s.name == name)
-        .ok_or_else(|| {
-            if lang.is_english() { eyre!("Skill not found: {}", name) } else { eyre!("未找到技能: {}", name) }
-        })?;
+    let skill = skills.iter().find(|s| s.name == name).ok_or_else(|| {
+        if lang.is_english() {
+            eyre!("Skill not found: {}", name)
+        } else {
+            eyre!("未找到技能: {}", name)
+        }
+    })?;
 
     if skill.source == SkillSource::BuiltIn {
-        println!("{}", t(lang, "✗ 内置技能不可删除。", "✗ Builtin skills cannot be deleted."));
+        println!(
+            "{}",
+            t(
+                lang,
+                "✗ 内置技能不可删除。",
+                "✗ Builtin skills cannot be deleted."
+            )
+        );
         return Ok(());
     }
 
-    let path = skill
-        .path
-        .as_ref()
-        .ok_or_else(|| eyre!("技能路径为空"))?;
+    let path = skill.path.as_ref().ok_or_else(|| eyre!("技能路径为空"))?;
 
     if lang.is_english() {
         print!("Confirm delete skill '{}'? [y/N] ", name);
@@ -622,8 +731,7 @@ fn cmd_skill_delete(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
         .wrap_err("读取用户输入失败")?;
 
     if input.trim().to_lowercase() == "y" {
-        std::fs::remove_dir_all(path)
-            .wrap_err_with(|| format!("删除 {} 失败", path.display()))?;
+        std::fs::remove_dir_all(path).wrap_err_with(|| format!("删除 {} 失败", path.display()))?;
         if lang.is_english() {
             println!("✓ Skill deleted: {}", name);
         } else {
@@ -639,12 +747,19 @@ fn cmd_skill_delete(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
 fn cmd_skill_show(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
     let lang = crate::config::Config::get_language();
     let name = name.ok_or_else(|| {
-        if lang.is_english() { eyre!("Usage: /skill show <name>") } else { eyre!("用法: /skill show <name>") }
+        if lang.is_english() {
+            eyre!("Usage: /skill show <name>")
+        } else {
+            eyre!("用法: /skill show <name>")
+        }
     })?;
-    let content = load_skill_content(name, skills, lang)
-        .map_err(|e| eyre!("{}", e))?;
+    let content = load_skill_content(name, skills, lang).map_err(|e| eyre!("{}", e))?;
 
-    println!("=== {} [{}] ===\n", content.meta.name, content.meta.source.label_for(lang));
+    println!(
+        "=== {} [{}] ===\n",
+        content.meta.name,
+        content.meta.source.label_for(lang)
+    );
     println!("{}", content.instructions);
     if !content.resources.is_empty() {
         println!("\n--- {} ---", t(lang, "附带资源", "Attached resources"));
@@ -658,7 +773,12 @@ fn cmd_skill_show(name: Option<&str>, skills: &[SkillMeta]) -> Result<()> {
 // ─── /identity 命令实现 ─────────────────────────────────────────────────
 
 /// /identity 命令入口 —— 解析子命令后分发
-fn cmd_identity(rest: &str, agent: &mut Agent, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+fn cmd_identity(
+    rest: &str,
+    agent: &mut Agent,
+    data_dir: &std::path::Path,
+    workspace_dir: std::path::PathBuf,
+) -> Result<()> {
     let mut parts = rest.splitn(2, ' ');
     let sub = parts.next().unwrap_or("").trim();
     let arg = parts.next().map(|s| s.trim());
@@ -670,7 +790,14 @@ fn cmd_identity(rest: &str, agent: &mut Agent, data_dir: &std::path::Path, works
         "reload" => {
             agent.reload_identity(&workspace_dir, data_dir);
             let lang = crate::config::Config::get_language();
-            println!("{}", t(lang, "✓ 身份文件已重新加载，下次对话立即生效。", "✓ Identity files reloaded. Takes effect on next message."));
+            println!(
+                "{}",
+                t(
+                    lang,
+                    "✓ 身份文件已重新加载，下次对话立即生效。",
+                    "✓ Identity files reloaded. Takes effect on next message."
+                )
+            );
             Ok(())
         }
         other => {
@@ -686,14 +813,25 @@ fn cmd_identity(rest: &str, agent: &mut Agent, data_dir: &std::path::Path, works
 }
 
 /// /identity（状态总览）实现
-fn cmd_identity_status(data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+fn cmd_identity_status(
+    data_dir: &std::path::Path,
+    workspace_dir: std::path::PathBuf,
+) -> Result<()> {
     println!("身份文件状态:\n");
 
     let files = [
         ("USER.md（全局用户偏好）", data_dir.join("USER.md"), true),
         ("SOUL.md（全局 Agent 人格）", data_dir.join("SOUL.md"), true),
-        ("SOUL.md（项目 Agent 人格）", workspace_dir.join(".rrclaw/SOUL.md"), false),
-        ("AGENT.md（项目行为约定）", workspace_dir.join(".rrclaw/AGENT.md"), false),
+        (
+            "SOUL.md（项目 Agent 人格）",
+            workspace_dir.join(".rrclaw/SOUL.md"),
+            false,
+        ),
+        (
+            "AGENT.md（项目行为约定）",
+            workspace_dir.join(".rrclaw/AGENT.md"),
+            false,
+        ),
     ];
 
     for (label, path, is_global) in &files {
@@ -723,13 +861,17 @@ fn cmd_identity_status(data_dir: &std::path::Path, workspace_dir: std::path::Pat
 }
 
 /// /identity edit <type> — 引导式问答入口
-fn cmd_identity_edit(file_type: Option<&str>, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+fn cmd_identity_edit(
+    file_type: Option<&str>,
+    data_dir: &std::path::Path,
+    workspace_dir: std::path::PathBuf,
+) -> Result<()> {
     let file_type = file_type.ok_or_else(|| eyre!("用法: /identity edit <user|soul|agent>"))?;
     match file_type {
-        "user"  => guided_edit_user(data_dir),
-        "soul"  => guided_edit_soul(data_dir, &workspace_dir),
+        "user" => guided_edit_user(data_dir),
+        "soul" => guided_edit_soul(data_dir, &workspace_dir),
         "agent" => guided_edit_agent(&workspace_dir),
-        other   => Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+        other => Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
     }
 }
 
@@ -773,7 +915,11 @@ fn extract_section_items(content: &str, section_header: &str) -> Vec<String> {
 
 /// 显示现有条目，询问保留与否，然后循环追问新条目
 /// `prompt_first`：空列表时首条提示，`prompt_more`：后续条提示
-fn collect_list_items(prompt_first: &str, prompt_more: &str, existing: Vec<String>) -> Result<Vec<String>> {
+fn collect_list_items(
+    prompt_first: &str,
+    prompt_more: &str,
+    existing: Vec<String>,
+) -> Result<Vec<String>> {
     let mut items: Vec<String> = if !existing.is_empty() {
         println!("  当前已有 {} 条：", existing.len());
         for (i, item) in existing.iter().enumerate() {
@@ -784,13 +930,21 @@ fn collect_list_items(prompt_first: &str, prompt_more: &str, existing: Vec<Strin
             .default(true)
             .interact()
             .wrap_err("确认输入失败")?;
-        if keep { existing } else { vec![] }
+        if keep {
+            existing
+        } else {
+            vec![]
+        }
     } else {
         vec![]
     };
 
     loop {
-        let prompt = if items.is_empty() { prompt_first } else { prompt_more };
+        let prompt = if items.is_empty() {
+            prompt_first
+        } else {
+            prompt_more
+        };
         let item: String = Input::new()
             .with_prompt(prompt)
             .allow_empty(true)
@@ -811,11 +965,17 @@ fn write_identity_file(path: &std::path::Path, content: &str) -> Result<()> {
         std::fs::create_dir_all(parent)
             .wrap_err_with(|| format!("创建目录失败: {}", parent.display()))?;
     }
-    std::fs::write(path, content)
-        .wrap_err_with(|| format!("写入文件失败: {}", path.display()))?;
+    std::fs::write(path, content).wrap_err_with(|| format!("写入文件失败: {}", path.display()))?;
     let lang = crate::config::Config::get_language();
     println!("\n✓ {}: {}", t(lang, "已保存", "Saved"), path.display());
-    println!("  {}", t(lang, "使用 /identity reload 立即生效。", "Use /identity reload to apply immediately."));
+    println!(
+        "  {}",
+        t(
+            lang,
+            "使用 /identity reload 立即生效。",
+            "Use /identity reload to apply immediately."
+        )
+    );
     Ok(())
 }
 
@@ -841,7 +1001,11 @@ fn guided_edit_user(data_dir: &std::path::Path) -> Result<()> {
         .with_prompt("工作语言偏好（如：中文）")
         .default({
             let v = extract_field(&existing, "工作语言");
-            if v.is_empty() { "中文".to_string() } else { v }
+            if v.is_empty() {
+                "中文".to_string()
+            } else {
+                v
+            }
         })
         .interact_text()
         .wrap_err("输入失败")?;
@@ -907,7 +1071,11 @@ fn guided_edit_soul(data_dir: &std::path::Path, workspace_dir: &std::path::Path)
         .default(0)
         .interact()
         .wrap_err("选择失败")?;
-    let path = if scope_idx == 0 { &global_path } else { &project_path };
+    let path = if scope_idx == 0 {
+        &global_path
+    } else {
+        &project_path
+    };
 
     let existing = std::fs::read_to_string(path).unwrap_or_default();
 
@@ -943,7 +1111,8 @@ fn guided_edit_soul(data_dir: &std::path::Path, workspace_dir: &std::path::Path)
         .with_prompt("禁止开头语（如：当然！好的！，留空跳过）")
         .default({
             // 从 `- 不说"..."等废话开头` 提取
-            existing.lines()
+            existing
+                .lines()
                 .find_map(|line| {
                     let line = line.trim();
                     if line.starts_with("- 不说\"") || line.starts_with("- 不用\"") {
@@ -961,13 +1130,20 @@ fn guided_edit_soul(data_dir: &std::path::Path, workspace_dir: &std::path::Path)
         .wrap_err("输入失败")?;
 
     // 其余 `- ` 行作为已有 traits（排除已处理的字段行）
-    let existing_traits: Vec<String> = existing.lines()
+    let existing_traits: Vec<String> = existing
+        .lines()
         .filter_map(|line| {
             let line = line.trim();
-            if !line.starts_with("- ") { return None; }
+            if !line.starts_with("- ") {
+                return None;
+            }
             let item = &line[2..];
-            if item.starts_with("说话风格：") { return None; }
-            if item.starts_with("不说\"") || item.starts_with("不用\"") { return None; }
+            if item.starts_with("说话风格：") {
+                return None;
+            }
+            if item.starts_with("不说\"") || item.starts_with("不用\"") {
+                return None;
+            }
             Some(item.to_string())
         })
         .collect();
@@ -1034,7 +1210,9 @@ fn guided_edit_agent(workspace_dir: &std::path::Path) -> Result<()> {
     // 构建输出（空节省略）
     let mut content = String::new();
     let mut write_section = |header: &str, items: &[String]| {
-        if items.is_empty() { return; }
+        if items.is_empty() {
+            return;
+        }
         content.push_str(&format!("## {}\n\n", header));
         for item in items {
             content.push_str(&format!("- {}\n", item));
@@ -1054,17 +1232,25 @@ fn guided_edit_agent(workspace_dir: &std::path::Path) -> Result<()> {
 }
 
 /// /identity show <type> 实现
-fn cmd_identity_show(file_type: Option<&str>, data_dir: &std::path::Path, workspace_dir: std::path::PathBuf) -> Result<()> {
+fn cmd_identity_show(
+    file_type: Option<&str>,
+    data_dir: &std::path::Path,
+    workspace_dir: std::path::PathBuf,
+) -> Result<()> {
     let file_type = file_type.ok_or_else(|| eyre!("用法: /identity show <user|soul|agent>"))?;
 
     let path = match file_type {
-        "user"  => data_dir.join("USER.md"),
-        "soul"  => {
+        "user" => data_dir.join("USER.md"),
+        "soul" => {
             let project = workspace_dir.join(".rrclaw/SOUL.md");
-            if project.exists() { project } else { data_dir.join("SOUL.md") }
+            if project.exists() {
+                project
+            } else {
+                data_dir.join("SOUL.md")
+            }
         }
         "agent" => workspace_dir.join(".rrclaw/AGENT.md"),
-        other   => return Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
+        other => return Err(eyre!("未知类型 '{}'。支持: user, soul, agent", other)),
     };
 
     let lang = crate::config::Config::get_language();
@@ -1088,24 +1274,24 @@ fn cmd_identity_show(file_type: Option<&str>, data_dir: &std::path::Path, worksp
 
 /// 获取用户全局 skills 目录 ~/.rrclaw/skills/
 fn global_skills_dir() -> Result<std::path::PathBuf> {
-    let base_dirs = directories::BaseDirs::new()
-        .ok_or_else(|| eyre!("无法获取 home 目录"))?;
+    let base_dirs = directories::BaseDirs::new().ok_or_else(|| eyre!("无法获取 home 目录"))?;
     Ok(base_dirs.home_dir().join(".rrclaw").join("skills"))
 }
 
 /// 找到可编辑的 skill 路径（全局或项目级，非内置）
 fn find_editable_skill_path(name: &str, skills: &[SkillMeta]) -> Result<std::path::PathBuf> {
     let lang = crate::config::Config::get_language();
-    let skill = skills
-        .iter()
-        .find(|s| s.name == name)
-        .ok_or_else(|| {
-            if lang.is_english() {
-                eyre!("Skill '{}' not found. Use /skill new {} to create.", name, name)
-            } else {
-                eyre!("未找到技能 '{}'。使用 /skill new {} 创建。", name, name)
-            }
-        })?;
+    let skill = skills.iter().find(|s| s.name == name).ok_or_else(|| {
+        if lang.is_english() {
+            eyre!(
+                "Skill '{}' not found. Use /skill new {} to create.",
+                name,
+                name
+            )
+        } else {
+            eyre!("未找到技能 '{}'。使用 /skill new {} 创建。", name, name)
+        }
+    })?;
 
     if skill.source == SkillSource::BuiltIn {
         return Err(if lang.is_english() {
@@ -1123,10 +1309,7 @@ fn find_editable_skill_path(name: &str, skills: &[SkillMeta]) -> Result<std::pat
         });
     }
 
-    skill
-        .path
-        .clone()
-        .ok_or_else(|| eyre!("技能路径为空"))
+    skill.path.clone().ok_or_else(|| eyre!("技能路径为空"))
 }
 
 /// /config — 显示当前配置
@@ -1264,12 +1447,7 @@ fn cmd_switch(agent: &mut Agent, config: &Config) -> Result<()> {
         save_provider_to_config(info.name, &pc, None)?;
 
         let new_provider = crate::providers::create_provider(&pc);
-        agent.switch_provider(
-            new_provider,
-            info.name.to_string(),
-            base_url,
-            model.clone(),
-        );
+        agent.switch_provider(new_provider, info.name.to_string(), base_url, model.clone());
     }
 
     // 持久化: 更新 config.toml 的 [default] 段
@@ -1293,7 +1471,14 @@ fn cmd_apikey(agent: &mut Agent, config: &Config) -> Result<()> {
     // 列出已配置的 provider
     let configured: Vec<&String> = config.providers.keys().collect();
     if configured.is_empty() {
-        println!("{}", t(lang, "没有已配置的 Provider。请先用 /switch 添加。", "No configured providers. Use /switch to add one first."));
+        println!(
+            "{}",
+            t(
+                lang,
+                "没有已配置的 Provider。请先用 /switch 添加。",
+                "No configured providers. Use /switch to add one first."
+            )
+        );
         return Ok(());
     }
 
@@ -1380,7 +1565,10 @@ fn cmd_apikey(agent: &mut Agent, config: &Config) -> Result<()> {
                 pc.base_url.clone(),
                 pc.model.clone(),
             );
-            println!("{}", t(lang, "当前 session 已更新。", "Current session updated."));
+            println!(
+                "{}",
+                t(lang, "当前 session 已更新。", "Current session updated.")
+            );
         }
     }
 
@@ -1389,7 +1577,11 @@ fn cmd_apikey(agent: &mut Agent, config: &Config) -> Result<()> {
 
 /// 更新 config.toml 的 [default] 段（provider + model）
 /// 如果提供了 path 则使用它，否则使用 Config::config_path()
-fn save_default_to_config(provider: &str, model: &str, path: Option<&std::path::Path>) -> Result<()> {
+fn save_default_to_config(
+    provider: &str,
+    model: &str,
+    path: Option<&std::path::Path>,
+) -> Result<()> {
     let config_path = if let Some(p) = path {
         p.to_path_buf()
     } else {
@@ -1409,7 +1601,11 @@ fn save_default_to_config(provider: &str, model: &str, path: Option<&std::path::
 
 /// 将新 Provider 配置写入 config.toml
 /// 如果提供了 path 则使用它，否则使用 Config::config_path()
-fn save_provider_to_config(name: &str, pc: &ProviderConfig, path: Option<&std::path::Path>) -> Result<()> {
+fn save_provider_to_config(
+    name: &str,
+    pc: &ProviderConfig,
+    path: Option<&std::path::Path>,
+) -> Result<()> {
     let config_path = if let Some(p) = path {
         p.to_path_buf()
     } else {
@@ -1456,15 +1652,18 @@ fn cmd_mode(agent: &mut Agent) -> Result<()> {
     let current = &agent.policy().autonomy;
     let modes = if lang.is_english() {
         [
-            ("supervised", "Supervised — Confirm before executing (default)"),
-            ("full",       "Full       — Autonomous execution, no confirmation"),
-            ("read-only",  "ReadOnly   — Read-only, no tool execution"),
+            (
+                "supervised",
+                "Supervised — Confirm before executing (default)",
+            ),
+            ("full", "Full       — Autonomous execution, no confirmation"),
+            ("read-only", "ReadOnly   — Read-only, no tool execution"),
         ]
     } else {
         [
             ("supervised", "Supervised — 执行前需要用户确认（默认）"),
-            ("full",       "Full       — 自主执行，无需确认"),
-            ("read-only",  "ReadOnly   — 只读，不执行任何工具"),
+            ("full", "Full       — 自主执行，无需确认"),
+            ("read-only", "ReadOnly   — 只读，不执行任何工具"),
         ]
     };
 
@@ -1483,7 +1682,11 @@ fn cmd_mode(agent: &mut Agent) -> Result<()> {
         .items(&labels)
         .default(default_idx)
         .interact()
-        .wrap_err(t(lang, "选择安全模式失败", "Failed to select security mode"))?;
+        .wrap_err(t(
+            lang,
+            "选择安全模式失败",
+            "Failed to select security mode",
+        ))?;
 
     let (key, _) = modes[idx];
     let new_level = match key {
@@ -1545,19 +1748,37 @@ async fn cmd_routine(rest: &str, engine: Option<Arc<RoutineEngine>>) {
 fn cmd_routine_list(engine: &Option<Arc<RoutineEngine>>) {
     let lang = crate::config::Config::get_language();
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
         Some(e) => {
             let routines = e.list_routines();
             if routines.is_empty() {
-                println!("{}", t(lang, "暂无 Routine 任务。使用 /routine add 创建。", "No routines. Use /routine add to create one."));
+                println!(
+                    "{}",
+                    t(
+                        lang,
+                        "暂无 Routine 任务。使用 /routine add 创建。",
+                        "No routines. Use /routine add to create one."
+                    )
+                );
                 return;
             }
             if lang.is_english() {
-                println!("{:<20} {:<15} {:<8} {:<10} Message (first 40 chars)",
-                    "Name", "Schedule", "Status", "Channel");
+                println!(
+                    "{:<20} {:<15} {:<8} {:<10} Message (first 40 chars)",
+                    "Name", "Schedule", "Status", "Channel"
+                );
             } else {
-                println!("{:<20} {:<15} {:<8} {:<10} 消息（前 40 字）",
-                    "名称", "调度", "状态", "通道");
+                println!(
+                    "{:<20} {:<15} {:<8} {:<10} 消息（前 40 字）",
+                    "名称", "调度", "状态", "通道"
+                );
             }
             println!("{}", "-".repeat(80));
             for r in routines {
@@ -1567,8 +1788,10 @@ fn cmd_routine_list(engine: &Option<Arc<RoutineEngine>>) {
                     t(lang, "✗ 禁用", "✗ off")
                 };
                 let preview: String = r.message.chars().take(40).collect();
-                println!("{:<20} {:<15} {:<8} {:<10} {}",
-                    r.name, r.schedule, status, r.channel, preview);
+                println!(
+                    "{:<20} {:<15} {:<8} {:<10} {}",
+                    r.name, r.schedule, status, r.channel, preview
+                );
             }
         }
     }
@@ -1648,13 +1871,26 @@ async fn cmd_routine_add(engine: &Option<Arc<RoutineEngine>>, args: Option<&str>
         source: RoutineSource::Dynamic,
     };
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
         Some(e) => match e.clone().persist_add_routine(&routine).await {
             Ok(()) => {
                 if lang.is_english() {
-                    println!("✓ Routine '{}' created. (Use /routine run to trigger manually)", name);
+                    println!(
+                        "✓ Routine '{}' created. (Use /routine run to trigger manually)",
+                        name
+                    );
                 } else {
-                    println!("✓ Routine '{}' 已创建。（/routine run 可立即手动触发）", name);
+                    println!(
+                        "✓ Routine '{}' 已创建。（/routine run 可立即手动触发）",
+                        name
+                    );
                 }
             }
             Err(err) => println!("✗ {}: {}", t(lang, "保存失败", "Save failed"), err),
@@ -1667,11 +1903,25 @@ async fn cmd_routine_delete(engine: &Option<Arc<RoutineEngine>>, name: Option<&s
     let lang = crate::config::Config::get_language();
     let name = name.unwrap_or("");
     if name.is_empty() {
-        println!("{}", t(lang, "用法: /routine delete <name>", "Usage: /routine delete <name>"));
+        println!(
+            "{}",
+            t(
+                lang,
+                "用法: /routine delete <name>",
+                "Usage: /routine delete <name>"
+            )
+        );
         return;
     }
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
         Some(e) => match e.persist_delete_routine(name).await {
             Ok(()) => {
                 if lang.is_english() {
@@ -1686,28 +1936,40 @@ async fn cmd_routine_delete(engine: &Option<Arc<RoutineEngine>>, name: Option<&s
 }
 
 /// /routine enable|disable <name>
-async fn cmd_routine_enable(engine: &Option<Arc<RoutineEngine>>, name: Option<&str>, enabled: bool) {
+async fn cmd_routine_enable(
+    engine: &Option<Arc<RoutineEngine>>,
+    name: Option<&str>,
+    enabled: bool,
+) {
     let lang = crate::config::Config::get_language();
     let name = name.unwrap_or("");
     if name.is_empty() {
-        println!("Usage: /routine {} <name>", if enabled { "enable" } else { "disable" });
+        println!(
+            "Usage: /routine {} <name>",
+            if enabled { "enable" } else { "disable" }
+        );
         return;
     }
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
-        Some(e) => {
-            match e.persist_set_enabled(name, enabled).await {
-                Ok(()) => {
-                    let action = if enabled {
-                        t(lang, "已启用", "enabled")
-                    } else {
-                        t(lang, "已禁用", "disabled")
-                    };
-                    println!("✓ Routine '{}' {}.", name, action);
-                }
-                Err(err) => println!("✗ {}: {}", t(lang, "更新失败", "Update failed"), err),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
+        Some(e) => match e.persist_set_enabled(name, enabled).await {
+            Ok(()) => {
+                let action = if enabled {
+                    t(lang, "已启用", "enabled")
+                } else {
+                    t(lang, "已禁用", "disabled")
+                };
+                println!("✓ Routine '{}' {}.", name, action);
             }
-        }
+            Err(err) => println!("✗ {}: {}", t(lang, "更新失败", "Update failed"), err),
+        },
     }
 }
 
@@ -1716,11 +1978,25 @@ async fn cmd_routine_run(engine: &Option<Arc<RoutineEngine>>, name: Option<&str>
     let lang = crate::config::Config::get_language();
     let name = name.unwrap_or("");
     if name.is_empty() {
-        println!("{}", t(lang, "用法: /routine run <name>", "Usage: /routine run <name>"));
+        println!(
+            "{}",
+            t(
+                lang,
+                "用法: /routine run <name>",
+                "Usage: /routine run <name>"
+            )
+        );
         return;
     }
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
         Some(e) => {
             if lang.is_english() {
                 println!("Triggering routine manually: {} ...", name);
@@ -1749,7 +2025,14 @@ async fn cmd_routine_logs(engine: &Option<Arc<RoutineEngine>>, args: Option<&str
     let limit = args.and_then(|s| s.parse().ok()).unwrap_or(5);
 
     match engine {
-        None => println!("{}", t(lang, "Routine 系统未初始化", "Routine system not initialized")),
+        None => println!(
+            "{}",
+            t(
+                lang,
+                "Routine 系统未初始化",
+                "Routine system not initialized"
+            )
+        ),
         Some(e) => {
             let logs = e.get_recent_logs(limit).await;
             if logs.is_empty() {
@@ -1768,8 +2051,10 @@ async fn cmd_routine_logs(engine: &Option<Arc<RoutineEngine>>, args: Option<&str
                     t(lang, "✗ 失败", "✗ fail")
                 };
                 let started = &log.started_at[..19]; // 只取日期时间部分
-                println!("{} | {} | {} | {}",
-                    started, log.routine_name, status, log.output_preview);
+                println!(
+                    "{} | {} | {} | {}",
+                    started, log.routine_name, status, log.output_preview
+                );
                 if let Some(err) = &log.error {
                     println!("  {}: {}", t(lang, "错误", "Error"), err);
                 }
@@ -1789,10 +2074,18 @@ fn cmd_mcp(agent: &Agent) {
         .collect();
 
     if mcp_tools.is_empty() {
-        println!("{}", t(lang, "当前没有已加载的 MCP 工具。", "No MCP tools loaded."));
-        println!("{}", t(lang,
-            "在 ~/.rrclaw/config.toml 中配置 [mcp.servers.<name>] 后重启生效。",
-            "Configure [mcp.servers.<name>] in ~/.rrclaw/config.toml and restart."));
+        println!(
+            "{}",
+            t(lang, "当前没有已加载的 MCP 工具。", "No MCP tools loaded.")
+        );
+        println!(
+            "{}",
+            t(
+                lang,
+                "在 ~/.rrclaw/config.toml 中配置 [mcp.servers.<name>] 后重启生效。",
+                "Configure [mcp.servers.<name>] in ~/.rrclaw/config.toml and restart."
+            )
+        );
         return;
     }
 
@@ -1846,29 +2139,67 @@ async fn cmd_telegram(
         }
         Some(&"status") | Some(&"s") => {
             if runtime.is_running() {
-                println!("{}✓{} Telegram Bot {}", ansi::GREEN, ansi::RESET, t(lang, "运行中", "running"));
+                println!(
+                    "{}✓{} Telegram Bot {}",
+                    ansi::GREEN,
+                    ansi::RESET,
+                    t(lang, "运行中", "running")
+                );
             } else {
-                println!("{}✗{} Telegram Bot {}", ansi::RED, ansi::RESET, t(lang, "已停止", "stopped"));
+                println!(
+                    "{}✗{} Telegram Bot {}",
+                    ansi::RED,
+                    ansi::RESET,
+                    t(lang, "已停止", "stopped")
+                );
             }
         }
         Some(&"reload") => {
             // 重新加载配置
-            let config = crate::config::Config::load_or_init()
-                .wrap_err(t(lang, "加载配置失败", "Failed to load config"))?;
+            let config = crate::config::Config::load_or_init().wrap_err(t(
+                lang,
+                "加载配置失败",
+                "Failed to load config",
+            ))?;
             runtime.reload_config(config);
-            println!("{}✓{} {}", ansi::GREEN, ansi::RESET, t(lang, "配置已重新加载", "Config reloaded"));
+            println!(
+                "{}✓{} {}",
+                ansi::GREEN,
+                ansi::RESET,
+                t(lang, "配置已重新加载", "Config reloaded")
+            );
         }
         _ => {
             // 显示状态
             if runtime.is_running() {
-                println!("Telegram Bot: {}{}{}", ansi::GREEN, t(lang, "运行中", "running"), ansi::RESET);
+                println!(
+                    "Telegram Bot: {}{}{}",
+                    ansi::GREEN,
+                    t(lang, "运行中", "running"),
+                    ansi::RESET
+                );
                 println!("  /telegram stop   {}", t(lang, "停止", "stop"));
             } else {
-                println!("Telegram Bot: {}{}{}", ansi::RED, t(lang, "已停止", "stopped"), ansi::RESET);
-                println!("  /telegram start  {}", t(lang, "启动（需先配置 [telegram]）", "start (requires [telegram] config)"));
+                println!(
+                    "Telegram Bot: {}{}{}",
+                    ansi::RED,
+                    t(lang, "已停止", "stopped"),
+                    ansi::RESET
+                );
+                println!(
+                    "  /telegram start  {}",
+                    t(
+                        lang,
+                        "启动（需先配置 [telegram]）",
+                        "start (requires [telegram] config)"
+                    )
+                );
             }
             println!("  /telegram status {}", t(lang, "查看状态", "check status"));
-            println!("  /telegram reload {}", t(lang, "重新加载配置", "reload config"));
+            println!(
+                "  /telegram reload {}",
+                t(lang, "重新加载配置", "reload config")
+            );
         }
     }
 
@@ -1977,7 +2308,13 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                         let mut i = 0;
                         while flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            print!("\r{}{}{}{}", ansi::YELLOW, frames[i % frames.len()], thinking_text, ansi::RESET);
+                            print!(
+                                "\r{}{}{}{}",
+                                ansi::YELLOW,
+                                frames[i % frames.len()],
+                                thinking_text,
+                                ansi::RESET
+                            );
                             let _ = std::io::stdout().flush();
                             i += 1;
                             tokio::time::sleep(std::time::Duration::from_millis(80)).await;
@@ -2006,7 +2343,13 @@ async fn stream_message(agent: &mut Agent, input: &str) -> Result<()> {
                     }
                     match &status {
                         ToolStatusKind::Running(cmd) => {
-                            print!("\n{}⏳{} {} ...{}", ansi::YELLOW, ansi::RESET, cmd, ansi::DIM);
+                            print!(
+                                "\n{}⏳{} {} ...{}",
+                                ansi::YELLOW,
+                                ansi::RESET,
+                                cmd,
+                                ansi::DIM
+                            );
                             let _ = std::io::stdout().flush();
                         }
                         ToolStatusKind::Success(summary) => {
@@ -2182,8 +2525,14 @@ model = "deepseek-chat"
         let content = fs::read_to_string(&path).unwrap();
         let doc: toml_edit::DocumentMut = content.parse().unwrap();
 
-        assert_eq!(doc["providers"]["glm"]["base_url"].as_str(), Some("https://open.bigmodel.cn/api/paas/v4"));
-        assert_eq!(doc["providers"]["glm"]["api_key"].as_str(), Some("glm-key-123"));
+        assert_eq!(
+            doc["providers"]["glm"]["base_url"].as_str(),
+            Some("https://open.bigmodel.cn/api/paas/v4")
+        );
+        assert_eq!(
+            doc["providers"]["glm"]["api_key"].as_str(),
+            Some("glm-key-123")
+        );
         assert_eq!(doc["providers"]["glm"]["model"].as_str(), Some("glm-4.7"));
         // 原有配置应保留
         assert_eq!(doc["default"]["provider"].as_str(), Some("deepseek"));
@@ -2215,7 +2564,8 @@ model = "deepseek-chat"
 
     #[test]
     fn extract_section_items_collects_lines() {
-        let content = "## 代码规范\n\n- 通过 clippy\n- 禁止 unwrap()\n\n## Git 提交规范\n\n- feat/fix 前缀\n";
+        let content =
+            "## 代码规范\n\n- 通过 clippy\n- 禁止 unwrap()\n\n## Git 提交规范\n\n- feat/fix 前缀\n";
         let items = extract_section_items(content, "代码规范");
         assert_eq!(items, vec!["通过 clippy", "禁止 unwrap()"]);
     }

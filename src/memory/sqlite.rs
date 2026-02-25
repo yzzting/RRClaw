@@ -10,8 +10,8 @@ use tantivy::schema::*;
 use tantivy::{doc, Index, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 use tokio::sync::Mutex;
 
-use crate::providers::ConversationMessage;
 use super::traits::{Memory, MemoryCategory, MemoryEntry};
+use crate::providers::ConversationMessage;
 
 /// SQLite + tantivy 记忆实现
 pub struct SqliteMemory {
@@ -32,7 +32,11 @@ impl SqliteMemory {
     /// 若分词器与上次启动不同，自动删除旧索引并重建（SQLite 数据保留）。
     pub fn open(data_dir: &Path) -> Result<Self> {
         let lang = crate::config::Config::get_language();
-        let desired_tokenizer = if lang.is_english() { "en_stem" } else { "jieba" };
+        let desired_tokenizer = if lang.is_english() {
+            "en_stem"
+        } else {
+            "jieba"
+        };
         Self::open_with_tokenizer(data_dir, desired_tokenizer)
     }
 
@@ -76,10 +80,17 @@ impl SqliteMemory {
             Self::build_schema(desired_tokenizer);
         let dir = tantivy::directory::MmapDirectory::open(&index_path)
             .wrap_err("打开 tantivy 目录失败")?;
-        let index =
-            Index::open_or_create(dir, schema.clone()).wrap_err("创建 tantivy 索引失败")?;
+        let index = Index::open_or_create(dir, schema.clone()).wrap_err("创建 tantivy 索引失败")?;
 
-        Self::finish_init(db, index, schema, key_field, content_field, category_field, desired_tokenizer)
+        Self::finish_init(
+            db,
+            index,
+            schema,
+            key_field,
+            content_field,
+            category_field,
+            desired_tokenizer,
+        )
     }
 
     /// 从内存创建（测试用）。始终使用 jieba 以保持中文搜索测试兼容性。
@@ -89,7 +100,15 @@ impl SqliteMemory {
         let (schema, key_field, content_field, category_field) = Self::build_schema("jieba");
         let index = Index::create_in_ram(schema.clone());
 
-        Self::finish_init(db, index, schema, key_field, content_field, category_field, "jieba")
+        Self::finish_init(
+            db,
+            index,
+            schema,
+            key_field,
+            content_field,
+            category_field,
+            "jieba",
+        )
     }
 
     /// 构建 tantivy Schema，以 `tokenizer_name` 作为内容字段的分词器。
@@ -230,7 +249,12 @@ impl SqliteMemory {
 
     /// 种入核心知识条目（启动时调用，upsert 语义）
     /// 让 BM25 recall 能匹配到 RRClaw 自身信息，减少模型盲猜
-    pub async fn seed_core_knowledge(&self, data_dir: &Path, log_dir: &Path, config_path: &Path) -> Result<()> {
+    pub async fn seed_core_knowledge(
+        &self,
+        data_dir: &Path,
+        log_dir: &Path,
+        config_path: &Path,
+    ) -> Result<()> {
         let seeds = [
             (
                 "rrclaw_db_path",
@@ -464,9 +488,13 @@ mod tests {
     async fn recall_chinese_search() {
         let mem = create_test_memory().await;
 
-        mem.store("meeting", "今天的会议讨论了人工智能的应用", MemoryCategory::Daily)
-            .await
-            .unwrap();
+        mem.store(
+            "meeting",
+            "今天的会议讨论了人工智能的应用",
+            MemoryCategory::Daily,
+        )
+        .await
+        .unwrap();
         mem.store("lunch", "午餐吃了红烧肉", MemoryCategory::Daily)
             .await
             .unwrap();
@@ -650,12 +678,17 @@ mod tests {
             }),
         ];
 
-        mem.save_conversation_history(session_id, &history).await.unwrap();
+        mem.save_conversation_history(session_id, &history)
+            .await
+            .unwrap();
         let loaded = mem.load_conversation_history(session_id).await.unwrap();
         assert_eq!(loaded.len(), 4);
 
         // 验证 AssistantToolCalls 的 reasoning_content 保留
-        if let ConversationMessage::AssistantToolCalls { reasoning_content, .. } = &loaded[1] {
+        if let ConversationMessage::AssistantToolCalls {
+            reasoning_content, ..
+        } = &loaded[1]
+        {
             assert_eq!(reasoning_content.as_deref(), Some("用户需要查看文件列表"));
         } else {
             panic!("第2条消息应是 AssistantToolCalls");
@@ -731,13 +764,20 @@ mod tests {
     async fn memory_category_roundtrip() {
         let mem = create_test_memory().await;
 
-        mem.store("custom", "custom category test", MemoryCategory::Custom("project_a".to_string()))
-            .await
-            .unwrap();
+        mem.store(
+            "custom",
+            "custom category test",
+            MemoryCategory::Custom("project_a".to_string()),
+        )
+        .await
+        .unwrap();
 
         let results = mem.recall("custom category", 10).await.unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].category, MemoryCategory::Custom("project_a".to_string()));
+        assert_eq!(
+            results[0].category,
+            MemoryCategory::Custom("project_a".to_string())
+        );
     }
 
     // ── P9-4: tokenizer selection tests ───────────────────────────────────────
@@ -779,16 +819,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
 
-        mem.store("prog", "programming with Rust is great", MemoryCategory::Core)
-            .await
-            .unwrap();
-        mem.store("cook", "cooking pasta for dinner tonight", MemoryCategory::Core)
-            .await
-            .unwrap();
+        mem.store(
+            "prog",
+            "programming with Rust is great",
+            MemoryCategory::Core,
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "cook",
+            "cooking pasta for dinner tonight",
+            MemoryCategory::Core,
+        )
+        .await
+        .unwrap();
 
         // "program" should stem-match "programming"
         let results = mem.recall("program Rust", 5).await.unwrap();
-        assert!(!results.is_empty(), "en_stem should recall stemmed English words");
+        assert!(
+            !results.is_empty(),
+            "en_stem should recall stemmed English words"
+        );
         assert_eq!(results[0].key, "prog");
     }
 
@@ -812,7 +863,11 @@ mod tests {
         {
             let mem = SqliteMemory::open_with_tokenizer(tmp.path(), "en_stem").unwrap();
             // SQLite data is preserved even after index rebuild
-            assert_eq!(mem.count().await.unwrap(), 1, "SQLite data survives index rebuild");
+            assert_eq!(
+                mem.count().await.unwrap(),
+                1,
+                "SQLite data survives index rebuild"
+            );
 
             // Verify the new tokenizer is now recorded in search_meta
             let db = Connection::open(tmp.path().join("memory.db")).unwrap();

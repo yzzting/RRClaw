@@ -161,7 +161,12 @@ mod tests {
     #[tokio::test]
     async fn execute_filesystem_skill_returns_instructions() {
         let tmp = tempdir().unwrap();
-        write_skill(tmp.path(), "my-skill", "我的技能，测试用。", "这是详细操作指南。");
+        write_skill(
+            tmp.path(),
+            "my-skill",
+            "我的技能，测试用。",
+            "这是详细操作指南。",
+        );
 
         let skills = scan_skills_dir(tmp.path(), SkillSource::Global);
         let tool = SkillTool::new(skills);

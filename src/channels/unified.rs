@@ -124,7 +124,10 @@ mod tests {
     #[test]
     fn test_from_telegram() {
         let (msg, _rx) = UnifiedMessage::from_telegram(12345, "hello".to_string());
-        assert!(matches!(msg.source, MessageSource::Telegram { chat_id: 12345 }));
+        assert!(matches!(
+            msg.source,
+            MessageSource::Telegram { chat_id: 12345 }
+        ));
         assert_eq!(msg.content, "hello");
     }
 }

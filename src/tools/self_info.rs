@@ -29,7 +29,10 @@ impl SelfInfoTool {
 
     fn query_config(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("Current Provider: {}", self.config.default.provider));
+        lines.push(format!(
+            "Current Provider: {}",
+            self.config.default.provider
+        ));
         lines.push(format!("Current Model: {}", self.config.default.model));
         lines.push(format!("Temperature: {}", self.config.default.temperature));
         lines.push(format!(
@@ -42,7 +45,11 @@ impl SelfInfoTool {
         ));
         lines.push(format!(
             "Workspace-only: {}",
-            if self.config.security.workspace_only { "yes" } else { "no" }
+            if self.config.security.workspace_only {
+                "yes"
+            } else {
+                "no"
+            }
         ));
 
         lines.push(String::new());
@@ -162,10 +169,7 @@ impl Tool for SelfInfoTool {
         args: serde_json::Value,
         _policy: &SecurityPolicy,
     ) -> Result<ToolResult> {
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("help");
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("help");
 
         let output = match query {
             "config" => self.query_config(),
@@ -220,7 +224,9 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::config::{DefaultConfig, MemoryConfig, ProviderConfig, RoutinesConfig, SecurityConfig};
+    use crate::config::{
+        DefaultConfig, MemoryConfig, ProviderConfig, RoutinesConfig, SecurityConfig,
+    };
 
     fn test_config() -> Config {
         let mut providers = HashMap::new();

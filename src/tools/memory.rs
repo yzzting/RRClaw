@@ -4,9 +4,9 @@ use color_eyre::eyre::Result;
 use serde_json::json;
 use std::sync::Arc;
 
+use super::traits::{Tool, ToolResult};
 use crate::memory::{Memory, MemoryCategory};
 use crate::security::SecurityPolicy;
-use super::traits::{Tool, ToolResult};
 
 /// LLM 主动存储记忆
 pub struct MemoryStoreTool {
@@ -21,7 +21,9 @@ impl MemoryStoreTool {
 
 #[async_trait]
 impl Tool for MemoryStoreTool {
-    fn name(&self) -> &str { "memory_store" }
+    fn name(&self) -> &str {
+        "memory_store"
+    }
 
     fn description(&self) -> &str {
         "存储一条记忆。用于保存用户偏好、项目约定、学到的知识等需要长期记住的信息。\
@@ -57,22 +59,26 @@ impl Tool for MemoryStoreTool {
     ) -> Result<ToolResult> {
         let key = match args.get("key").and_then(|v| v.as_str()) {
             Some(k) if !k.is_empty() => k,
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("缺少 key 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("缺少 key 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
 
         let content = match args.get("content").and_then(|v| v.as_str()) {
             Some(c) if !c.is_empty() => c,
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("缺少 content 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("缺少 content 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
 
         let category = args
@@ -111,7 +117,9 @@ impl MemoryRecallTool {
 
 #[async_trait]
 impl Tool for MemoryRecallTool {
-    fn name(&self) -> &str { "memory_recall" }
+    fn name(&self) -> &str {
+        "memory_recall"
+    }
 
     fn description(&self) -> &str {
         "搜索记忆。根据查询关键词检索相关记忆。\
@@ -144,18 +152,17 @@ impl Tool for MemoryRecallTool {
     ) -> Result<ToolResult> {
         let query = match args.get("query").and_then(|v| v.as_str()) {
             Some(q) if !q.is_empty() => q,
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("缺少 query 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("缺少 query 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
 
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(5) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         match self.memory.recall(query, limit).await {
             Ok(entries) => {
@@ -210,7 +217,9 @@ impl MemoryForgetTool {
 
 #[async_trait]
 impl Tool for MemoryForgetTool {
-    fn name(&self) -> &str { "memory_forget" }
+    fn name(&self) -> &str {
+        "memory_forget"
+    }
 
     fn description(&self) -> &str {
         "删除一条记忆。当用户要求忘记某些信息，或者记忆已过时需要清理时使用。\
@@ -237,12 +246,14 @@ impl Tool for MemoryForgetTool {
     ) -> Result<ToolResult> {
         let key = match args.get("key").and_then(|v| v.as_str()) {
             Some(k) if !k.is_empty() => k,
-            _ => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("缺少 key 参数".to_string()),
-                ..Default::default()
-            }),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("缺少 key 参数".to_string()),
+                    ..Default::default()
+                })
+            }
         };
 
         match self.memory.forget(key).await {
@@ -284,7 +295,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::{MemoryEntry, MemoryCategory};
+    use crate::memory::{MemoryCategory, MemoryEntry};
     use crate::security::{AutonomyLevel, SecurityPolicy};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -307,7 +318,9 @@ mod tests {
 
     impl MockMemory {
         fn new() -> Self {
-            Self { stored: std::sync::Mutex::new(Vec::new()) }
+            Self {
+                stored: std::sync::Mutex::new(Vec::new()),
+            }
         }
     }
 
@@ -323,7 +336,8 @@ mod tests {
         }
         async fn recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
             let stored = self.stored.lock().unwrap();
-            let results: Vec<MemoryEntry> = stored.iter()
+            let results: Vec<MemoryEntry> = stored
+                .iter()
                 .filter(|(_, content, _)| content.contains(query))
                 .take(limit)
                 .map(|(key, content, cat)| MemoryEntry {
@@ -367,10 +381,10 @@ mod tests {
     async fn store_missing_key() {
         let mem = Arc::new(MockMemory::new());
         let tool = MemoryStoreTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({"content": "something"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"content": "something"}), &test_policy())
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("key"));
     }
@@ -379,10 +393,10 @@ mod tests {
     async fn store_missing_content() {
         let mem = Arc::new(MockMemory::new());
         let tool = MemoryStoreTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({"key": "k"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"key": "k"}), &test_policy())
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("content"));
     }
@@ -394,7 +408,9 @@ mod tests {
         tool.execute(
             serde_json::json!({"key": "k", "content": "v"}),
             &test_policy(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(mem.stored.lock().unwrap()[0].2, "core");
     }
 
@@ -403,14 +419,18 @@ mod tests {
     #[tokio::test]
     async fn recall_finds_matching() {
         let mem = Arc::new(MockMemory::new());
-        mem.store("k1", "Rust 是最好的语言", MemoryCategory::Core).await.unwrap();
-        mem.store("k2", "Python 也不错", MemoryCategory::Daily).await.unwrap();
+        mem.store("k1", "Rust 是最好的语言", MemoryCategory::Core)
+            .await
+            .unwrap();
+        mem.store("k2", "Python 也不错", MemoryCategory::Daily)
+            .await
+            .unwrap();
 
         let tool = MemoryRecallTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({"query": "Rust"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"query": "Rust"}), &test_policy())
+            .await
+            .unwrap();
         assert!(result.success);
         assert!(result.output.contains("Rust"));
         assert!(!result.output.contains("Python"));
@@ -420,10 +440,10 @@ mod tests {
     async fn recall_no_results() {
         let mem = Arc::new(MockMemory::new());
         let tool = MemoryRecallTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({"query": "不存在的东西"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"query": "不存在的东西"}), &test_policy())
+            .await
+            .unwrap();
         assert!(result.success);
         assert!(result.output.contains("未找到"));
     }
@@ -432,10 +452,10 @@ mod tests {
     async fn recall_missing_query() {
         let mem = Arc::new(MockMemory::new());
         let tool = MemoryRecallTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({}), &test_policy())
+            .await
+            .unwrap();
         assert!(!result.success);
     }
 
@@ -444,13 +464,15 @@ mod tests {
     #[tokio::test]
     async fn forget_existing_key() {
         let mem = Arc::new(MockMemory::new());
-        mem.store("k1", "content", MemoryCategory::Core).await.unwrap();
+        mem.store("k1", "content", MemoryCategory::Core)
+            .await
+            .unwrap();
 
         let tool = MemoryForgetTool::new(mem.clone());
-        let result = tool.execute(
-            serde_json::json!({"key": "k1"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"key": "k1"}), &test_policy())
+            .await
+            .unwrap();
         assert!(result.success);
         assert!(result.output.contains("已删除"));
         assert_eq!(mem.count().await.unwrap(), 0);
@@ -460,10 +482,10 @@ mod tests {
     async fn forget_nonexistent_key() {
         let mem = Arc::new(MockMemory::new());
         let tool = MemoryForgetTool::new(mem);
-        let result = tool.execute(
-            serde_json::json!({"key": "nonexistent"}),
-            &test_policy(),
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"key": "nonexistent"}), &test_policy())
+            .await
+            .unwrap();
         assert!(result.success);
         assert!(result.output.contains("未找到"));
     }

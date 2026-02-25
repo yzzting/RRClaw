@@ -30,10 +30,8 @@ const EVERY_SECOND: &str = "* * * * * *";
 
 #[tokio::test]
 async fn s1_1_scheduler_triggers_after_start() {
-    let (engine, _tmp) = common::make_test_engine(vec![
-        common::test_routine("s1-1-job", EVERY_SECOND),
-    ])
-    .await;
+    let (engine, _tmp) =
+        common::make_test_engine(vec![common::test_routine("s1-1-job", EVERY_SECOND)]).await;
 
     engine.clone().start().await.expect("scheduler 启动失败");
 
@@ -60,7 +58,11 @@ async fn s1_2_persist_add_routine_schedules_immediately() {
 
     // 等 1 秒确认无触发（空调度器）
     sleep(Duration::from_secs(1)).await;
-    assert_eq!(engine.trigger_count.load(Ordering::Relaxed), 0, "空调度器不应触发");
+    assert_eq!(
+        engine.trigger_count.load(Ordering::Relaxed),
+        0,
+        "空调度器不应触发"
+    );
 
     // 动态添加 routine（6字段 cron 也合法，persist_add_routine 接受 5 或 6 字段）
     let routine = common::test_routine("s1-2-job", EVERY_SECOND);
@@ -98,7 +100,10 @@ async fn s1_3_persist_delete_updates_state_immediately() {
     assert_eq!(engine.list_routines().len(), 1);
 
     // 删除 routine
-    engine.persist_delete_routine("s1-3-job").await.expect("persist_delete_routine 失败");
+    engine
+        .persist_delete_routine("s1-3-job")
+        .await
+        .expect("persist_delete_routine 失败");
 
     // 内存列表应立即为空
     assert!(
@@ -121,27 +126,38 @@ async fn s1_3_persist_delete_updates_state_immediately() {
 
 #[tokio::test]
 async fn s1_4_disable_enable_updates_state_immediately() {
-    let (engine, _tmp) = common::make_test_engine(vec![
-        common::test_routine("s1-4-job", "0 8 * * *"),
-    ])
-    .await;
+    let (engine, _tmp) =
+        common::make_test_engine(vec![common::test_routine("s1-4-job", "0 8 * * *")]).await;
 
     // 禁用 routine
-    engine.persist_set_enabled("s1-4-job", false).await.expect("persist_set_enabled 失败");
+    engine
+        .persist_set_enabled("s1-4-job", false)
+        .await
+        .expect("persist_set_enabled 失败");
 
     // 内存状态立即更新
     let routines = engine.list_routines();
-    let job = routines.iter().find(|r| r.name == "s1-4-job").expect("找不到 routine");
+    let job = routines
+        .iter()
+        .find(|r| r.name == "s1-4-job")
+        .expect("找不到 routine");
     assert!(!job.enabled, "禁用后 list_routines 应返回 enabled=false");
 
     // 手动执行已禁用的 routine 应跳过执行（返回 Ok，不是 Err）
     let result = engine.execute_routine("s1-4-job").await;
     assert!(result.is_ok(), "禁用的 routine 应 skip 而不是 error");
     let msg = result.unwrap();
-    assert!(msg.contains("已禁用"), "跳过消息应包含'已禁用'，实际: {}", msg);
+    assert!(
+        msg.contains("已禁用"),
+        "跳过消息应包含'已禁用'，实际: {}",
+        msg
+    );
 
     // 重新启用
-    engine.persist_set_enabled("s1-4-job", true).await.expect("persist_set_enabled 失败");
+    engine
+        .persist_set_enabled("s1-4-job", true)
+        .await
+        .expect("persist_set_enabled 失败");
     let routines = engine.list_routines();
     let job = routines.iter().find(|r| r.name == "s1-4-job").unwrap();
     assert!(job.enabled, "重新启用后 list_routines 应返回 enabled=true");
@@ -160,12 +176,20 @@ async fn s1_5_five_field_cron_auto_converted() {
     let (engine, _tmp) = common::make_test_engine(vec![routine_6field, routine_5field]).await;
 
     // start() 不应 panic 或返回 error（两种格式都可以成功注册）
-    engine.clone().start().await.expect("5字段 cron 应被自动转换为6字段，start() 不应失败");
+    engine
+        .clone()
+        .start()
+        .await
+        .expect("5字段 cron 应被自动转换为6字段，start() 不应失败");
 
     // 等 3 秒，6字段的每秒 routine 应触发
     sleep(Duration::from_secs(3)).await;
     let count = engine.trigger_count.load(Ordering::Relaxed);
-    assert!(count >= 1, "6字段 cron routine 应触发，trigger_count = {}", count);
+    assert!(
+        count >= 1,
+        "6字段 cron routine 应触发，trigger_count = {}",
+        count
+    );
 }
 
 // ─── S1-6: list_routines 与 DB 状态一致（不依赖 scheduler） ─────────────────
@@ -179,7 +203,11 @@ async fn s1_6_list_routines_reflects_persist_changes() {
 
     // persist_add 后立即可 list
     let r = common::test_routine("s1-6-job", "0 8 * * *");
-    engine.clone().persist_add_routine(&r).await.expect("persist_add_routine 失败");
+    engine
+        .clone()
+        .persist_add_routine(&r)
+        .await
+        .expect("persist_add_routine 失败");
 
     let routines = engine.list_routines();
     assert_eq!(routines.len(), 1, "添加后应有 1 个 routine");
@@ -187,12 +215,18 @@ async fn s1_6_list_routines_reflects_persist_changes() {
     assert!(routines[0].enabled);
 
     // persist_set_enabled(false) 后立即可见
-    engine.persist_set_enabled("s1-6-job", false).await.expect("persist_set_enabled 失败");
+    engine
+        .persist_set_enabled("s1-6-job", false)
+        .await
+        .expect("persist_set_enabled 失败");
     let r = engine.list_routines();
     assert!(!r[0].enabled, "禁用后应立即可见");
 
     // persist_delete 后立即从 list 消失
-    engine.persist_delete_routine("s1-6-job").await.expect("persist_delete_routine 失败");
+    engine
+        .persist_delete_routine("s1-6-job")
+        .await
+        .expect("persist_delete_routine 失败");
     assert!(engine.list_routines().is_empty(), "删除后列表应为空");
 }
 

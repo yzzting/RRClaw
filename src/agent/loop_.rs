@@ -4,7 +4,9 @@ use tracing::{debug, info, warn};
 use tokio::sync::mpsc;
 
 use crate::memory::{Memory, MemoryCategory};
-use crate::providers::{ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec, ToolStatusKind};
+use crate::providers::{
+    ChatMessage, ConversationMessage, Provider, StreamEvent, ToolSpec, ToolStatusKind,
+};
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use crate::skills::SkillMeta;
 use crate::tools::Tool;
@@ -118,12 +120,16 @@ fn build_routing_prompt_en(skills: &[SkillMeta]) -> String {
     prompt.push_str("2. No skill needed, intent is clear:\n");
     prompt.push_str("   {\"skills\": [], \"direct\": true}\n\n");
     prompt.push_str("3. Intent unclear, need clarification (only when truly ambiguous):\n");
-    prompt.push_str("   {\"skills\": [], \"direct\": false, \"question\": \"your clarification question\"}\n\n");
+    prompt.push_str(
+        "   {\"skills\": [], \"direct\": false, \"question\": \"your clarification question\"}\n\n",
+    );
 
     // [5] Principles
     prompt.push_str("[Principles]\n");
     prompt.push_str("- When intent is clear, choose direct: true even if no skill matches\n");
-    prompt.push_str("- Skills are enhancements, not gates — don't ask the user when no skill matches\n");
+    prompt.push_str(
+        "- Skills are enhancements, not gates — don't ask the user when no skill matches\n",
+    );
     prompt.push_str("- Only return a question when the intent is genuinely ambiguous and proceeding would go wrong\n");
     prompt.push_str("- Use the same language as the user in the question field\n");
 
@@ -314,7 +320,11 @@ impl Agent {
         for name in skill_names {
             // 使用 src/skills/mod.rs 中的 load_skill_content(name, skills) -> Result<SkillContent>
             // SkillContent.instructions 是去除 frontmatter 后的正文
-            if let Ok(skill_content) = crate::skills::load_skill_content(name, &self.skills_meta, crate::config::Config::get_language()) {
+            if let Ok(skill_content) = crate::skills::load_skill_content(
+                name,
+                &self.skills_meta,
+                crate::config::Config::get_language(),
+            ) {
                 content.push_str(&format!(
                     "\n\n---\n## Skill: {}\n{}",
                     name, skill_content.instructions
@@ -402,10 +412,8 @@ impl Agent {
     /// 重新加载身份文件（无需重启）
     /// 调用方需提供 data_dir（Agent 自身不存储，避免扩大结构体）
     pub fn reload_identity(&mut self, workspace_dir: &std::path::Path, data_dir: &std::path::Path) {
-        self.identity_context = crate::agent::identity::load_identity_context(
-            workspace_dir,
-            data_dir,
-        );
+        self.identity_context =
+            crate::agent::identity::load_identity_context(workspace_dir, data_dir);
         if self.identity_context.is_some() {
             tracing::info!("身份文件已重新加载");
         }
@@ -456,7 +464,9 @@ impl Agent {
                 ConversationMessage::Chat(cm) if cm.role == "assistant" => {
                     cm.reasoning_content = None;
                 }
-                ConversationMessage::AssistantToolCalls { reasoning_content, .. } => {
+                ConversationMessage::AssistantToolCalls {
+                    reasoning_content, ..
+                } => {
                     *reasoning_content = None;
                 }
                 _ => {}
@@ -524,7 +534,11 @@ impl Agent {
             })];
             messages.extend(self.history.clone());
 
-            debug!("iteration={}, history_len={}", iteration, self.history.len());
+            debug!(
+                "iteration={}, history_len={}",
+                iteration,
+                self.history.len()
+            );
             debug!("system_prompt:\n{}", system_prompt);
             debug!("messages_to_llm: {:?}", messages);
 
@@ -555,12 +569,11 @@ impl Agent {
             }
 
             // 有 tool calls — 记录并逐个执行
-            self.history
-                .push(ConversationMessage::AssistantToolCalls {
-                    text: response.text.clone(),
-                    reasoning_content: response.reasoning_content.clone(),
-                    tool_calls: response.tool_calls.clone(),
-                });
+            self.history.push(ConversationMessage::AssistantToolCalls {
+                text: response.text.clone(),
+                reasoning_content: response.reasoning_content.clone(),
+                tool_calls: response.tool_calls.clone(),
+            });
 
             for tc in &response.tool_calls {
                 // 预验证: 在确认前检查安全策略（避免确认后被拒绝）
@@ -582,7 +595,9 @@ impl Agent {
                         self.tools
                             .iter()
                             .find(|t| t.name() == tc.name)
-                            .map(|t| find_missing_required_params(&t.parameters_schema(), &tc.arguments))
+                            .map(|t| {
+                                find_missing_required_params(&t.parameters_schema(), &tc.arguments)
+                            })
                             .unwrap_or_default()
                     };
                     if !missing.is_empty() {
@@ -600,7 +615,10 @@ impl Agent {
                                 tool_specs.push(new_spec);
                             }
                         }
-                        debug!("P7-3: 工具 '{}' 缺少参数 {:?}，已注入完整 schema", tc.name, missing);
+                        debug!(
+                            "P7-3: 工具 '{}' 缺少参数 {:?}，已注入完整 schema",
+                            tc.name, missing
+                        );
                         self.history.push(ConversationMessage::ToolResult {
                             tool_call_id: tc.id.clone(),
                             content: format!(
@@ -645,20 +663,21 @@ impl Agent {
                 // ─── Prompt Injection 检测 ───────────────────────────────────────────
                 // 只检测外部数据工具（shell/file_read/git/http_request）；
                 // 内部工具（memory_*/skill/self_info/config）返回受控内容，跳过检测
-                let final_content = if self.policy.injection_check && needs_injection_check(&tc.name) {
-                    let injection = crate::security::injection::check_tool_result(&result);
-                    if let Some(ref sev) = injection.severity {
-                        info!(
-                            tool = %tc.name,
-                            severity = ?sev,
-                            reason = ?injection.reason,
-                            "Prompt injection detected in tool result"
-                        );
-                    }
-                    injection.sanitized
-                } else {
-                    result
-                };
+                let final_content =
+                    if self.policy.injection_check && needs_injection_check(&tc.name) {
+                        let injection = crate::security::injection::check_tool_result(&result);
+                        if let Some(ref sev) = injection.severity {
+                            info!(
+                                tool = %tc.name,
+                                severity = ?sev,
+                                reason = ?injection.reason,
+                                "Prompt injection detected in tool result"
+                            );
+                        }
+                        injection.sanitized
+                    } else {
+                        result
+                    };
                 // ─── 检测结束 ─────────────────────────────────────────────────────────
 
                 self.history.push(ConversationMessage::ToolResult {
@@ -747,7 +766,11 @@ impl Agent {
             })];
             messages.extend(self.history.clone());
 
-            debug!("stream iteration={}, history_len={}", iteration, self.history.len());
+            debug!(
+                "stream iteration={}, history_len={}",
+                iteration,
+                self.history.len()
+            );
             debug!("system_prompt:\n{}", system_prompt);
             debug!("messages_to_llm: {:?}", messages);
 
@@ -757,7 +780,13 @@ impl Agent {
             // 流式调用 Provider
             let response = self
                 .provider
-                .chat_stream(&messages, &tool_specs, &self.model, self.temperature, tx.clone())
+                .chat_stream(
+                    &messages,
+                    &tool_specs,
+                    &self.model,
+                    self.temperature,
+                    tx.clone(),
+                )
                 .await?;
 
             debug!(
@@ -785,12 +814,11 @@ impl Agent {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             // 有 tool calls — tool call 阶段不流式输出文本给用户
-            self.history
-                .push(ConversationMessage::AssistantToolCalls {
-                    text: response.text.clone(),
-                    reasoning_content: response.reasoning_content.clone(),
-                    tool_calls: response.tool_calls.clone(),
-                });
+            self.history.push(ConversationMessage::AssistantToolCalls {
+                text: response.text.clone(),
+                reasoning_content: response.reasoning_content.clone(),
+                tool_calls: response.tool_calls.clone(),
+            });
 
             for tc in &response.tool_calls {
                 // 预验证: 在确认前检查安全策略（避免确认后被拒绝）
@@ -812,7 +840,9 @@ impl Agent {
                         self.tools
                             .iter()
                             .find(|t| t.name() == tc.name)
-                            .map(|t| find_missing_required_params(&t.parameters_schema(), &tc.arguments))
+                            .map(|t| {
+                                find_missing_required_params(&t.parameters_schema(), &tc.arguments)
+                            })
                             .unwrap_or_default()
                     };
                     if !missing.is_empty() {
@@ -830,7 +860,10 @@ impl Agent {
                                 tool_specs.push(new_spec);
                             }
                         }
-                        debug!("P7-3(stream): 工具 '{}' 缺少参数 {:?}，已注入完整 schema", tc.name, missing);
+                        debug!(
+                            "P7-3(stream): 工具 '{}' 缺少参数 {:?}，已注入完整 schema",
+                            tc.name, missing
+                        );
                         self.history.push(ConversationMessage::ToolResult {
                             tool_call_id: tc.id.clone(),
                             content: format!(
@@ -860,14 +893,20 @@ impl Agent {
 
                 // 发送执行状态
                 let cmd_summary = if tc.name == "shell" {
-                    tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or(&tc.name).to_string()
+                    tc.arguments
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&tc.name)
+                        .to_string()
                 } else {
                     tc.name.clone()
                 };
-                let _ = tx.send(StreamEvent::ToolStatus {
-                    name: tc.name.clone(),
-                    status: ToolStatusKind::Running(cmd_summary.clone()),
-                }).await;
+                let _ = tx
+                    .send(StreamEvent::ToolStatus {
+                        name: tc.name.clone(),
+                        status: ToolStatusKind::Running(cmd_summary.clone()),
+                    })
+                    .await;
 
                 info!("执行工具: {} args={}", tc.name, tc.arguments);
                 let result = self.execute_tool(&tc.name, tc.arguments.clone()).await;
@@ -885,10 +924,12 @@ impl Agent {
 
                 // 发送执行结果状态
                 if result.starts_with("[失败]") || result.starts_with("[错误]") {
-                    let _ = tx.send(StreamEvent::ToolStatus {
-                        name: tc.name.clone(),
-                        status: ToolStatusKind::Failed(truncate_str(&result, 200)),
-                    }).await;
+                    let _ = tx
+                        .send(StreamEvent::ToolStatus {
+                            name: tc.name.clone(),
+                            status: ToolStatusKind::Failed(truncate_str(&result, 200)),
+                        })
+                        .await;
                 } else {
                     // 成功时显示首行预览
                     let summary = if result.len() > 80 {
@@ -898,29 +939,32 @@ impl Agent {
                     } else {
                         truncate_str(&result, 80)
                     };
-                    let _ = tx.send(StreamEvent::ToolStatus {
-                        name: tc.name.clone(),
-                        status: ToolStatusKind::Success(summary),
-                    }).await;
+                    let _ = tx
+                        .send(StreamEvent::ToolStatus {
+                            name: tc.name.clone(),
+                            status: ToolStatusKind::Success(summary),
+                        })
+                        .await;
                 }
 
                 // ─── Prompt Injection 检测 ───────────────────────────────────────────
                 // 只检测外部数据工具（shell/file_read/git/http_request）；
                 // 内部工具（memory_*/skill/self_info/config）返回受控内容，跳过检测
-                let final_content = if self.policy.injection_check && needs_injection_check(&tc.name) {
-                    let injection = crate::security::injection::check_tool_result(&result);
-                    if let Some(ref sev) = injection.severity {
-                        info!(
-                            tool = %tc.name,
-                            severity = ?sev,
-                            reason = ?injection.reason,
-                            "Prompt injection detected in tool result"
-                        );
-                    }
-                    injection.sanitized
-                } else {
-                    result
-                };
+                let final_content =
+                    if self.policy.injection_check && needs_injection_check(&tc.name) {
+                        let injection = crate::security::injection::check_tool_result(&result);
+                        if let Some(ref sev) = injection.severity {
+                            info!(
+                                tool = %tc.name,
+                                severity = ?sev,
+                                reason = ?injection.reason,
+                                "Prompt injection detected in tool result"
+                            );
+                        }
+                        injection.sanitized
+                    } else {
+                        result
+                    };
                 // ─── 检测结束 ─────────────────────────────────────────────────────────
 
                 self.history.push(ConversationMessage::ToolResult {
@@ -1005,7 +1049,9 @@ impl Agent {
                 }
             }
 
-            let mcp_tools: Vec<_> = self.tools.iter()
+            let mcp_tools: Vec<_> = self
+                .tools
+                .iter()
                 .filter(|t| t.name().starts_with("mcp_"))
                 .collect();
             if !mcp_tools.is_empty() {
@@ -1041,7 +1087,9 @@ impl Agent {
                 "The system will automatically prompt the user for confirmation before execution. ",
                 "Do not ask for confirmation in your text — just issue the tool call."
             ),
-            AutonomyLevel::Full => "Full mode: you can execute tools autonomously within the allowed-commands list.",
+            AutonomyLevel::Full => {
+                "Full mode: you can execute tools autonomously within the allowed-commands list."
+            }
         };
         parts.push(security_rules.to_string());
 
@@ -1129,11 +1177,14 @@ impl Agent {
                 }
             }
 
-            let mcp_tools: Vec<_> = self.tools.iter()
+            let mcp_tools: Vec<_> = self
+                .tools
+                .iter()
                 .filter(|t| t.name().starts_with("mcp_"))
                 .collect();
             if !mcp_tools.is_empty() {
-                tools_desc.push_str("\n[MCP 工具]（需要时可用，首次调用后自动获取完整参数说明）:\n");
+                tools_desc
+                    .push_str("\n[MCP 工具]（需要时可用，首次调用后自动获取完整参数说明）:\n");
                 for tool in &mcp_tools {
                     tools_desc.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
                 }
@@ -1149,8 +1200,7 @@ impl Agent {
             .filter(|s| s.name != "skill")
             .collect();
         if !display_skills.is_empty() {
-            let mut skills_section =
-                "[可用技能]（需要时用 skill 工具加载详细指令）\n".to_string();
+            let mut skills_section = "[可用技能]（需要时用 skill 工具加载详细指令）\n".to_string();
             for skill in &display_skills {
                 skills_section.push_str(&format!("- {}: {}\n", skill.name, skill.description));
             }
@@ -1235,7 +1285,12 @@ impl Agent {
         // Priority 1: forced tool (git 命令直接路由到 git 工具)
         if let Some(tool_name) = self.pre_select_tool(user_msg) {
             debug!("强制使用工具: {}", tool_name);
-            return self.tools.iter().filter(|t| t.name() == tool_name).map(|t| t.spec()).collect();
+            return self
+                .tools
+                .iter()
+                .filter(|t| t.name() == tool_name)
+                .map(|t| t.spec())
+                .collect();
         }
 
         // Priority 2: Phase 1.5 关键词路由结果
@@ -1245,8 +1300,8 @@ impl Agent {
                 .tools
                 .iter()
                 .filter(|t| {
-                    self.routed_tool_names.iter().any(|n| n == t.name())
-                        || t.name() == "skill" // skill 工具始终可用（C 辅助路径）
+                    self.routed_tool_names.iter().any(|n| n == t.name()) || t.name() == "skill"
+                    // skill 工具始终可用（C 辅助路径）
                 })
                 .map(|t| t.spec())
                 .collect();
@@ -1264,8 +1319,8 @@ impl Agent {
         // 检测 git 操作（排除 github 等）
         // 匹配模式: git 开头，或包含 git 命令（git log, git status 等）
         let git_patterns = [
-            "git ",      // git 开头
-            "git\n",     // git 换行
+            "git ",  // git 开头
+            "git\n", // git 换行
             "git status",
             "git log",
             "git diff",
@@ -1356,7 +1411,10 @@ impl Agent {
     }
 
     /// 调用 LLM 对指定 history 片段生成摘要
-    async fn summarize_history(&self, messages: &[ConversationMessage]) -> color_eyre::eyre::Result<String> {
+    async fn summarize_history(
+        &self,
+        messages: &[ConversationMessage],
+    ) -> color_eyre::eyre::Result<String> {
         // 将 history 序列化为可读文本
         let transcript = format_history_for_summary(messages);
 
@@ -1373,20 +1431,18 @@ impl Agent {
              忽略：闲聊、重复内容、工具执行的详细输出。\n\
              用中文输出，以「对话摘要：」开头。\n\n\
              ---\n{}\n---",
-            COMPACT_SUMMARY_MAX_CHARS,
-            transcript_truncated
+            COMPACT_SUMMARY_MAX_CHARS, transcript_truncated
         );
 
-        let summary_messages = vec![
-            ConversationMessage::Chat(ChatMessage {
-                role: "user".to_string(),
-                content: summary_prompt,
-                reasoning_content: None,
-            })
-        ];
+        let summary_messages = vec![ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: summary_prompt,
+            reasoning_content: None,
+        })];
 
         // 直接调用 provider，不传 tools（摘要不需要 tool call）
-        let response = self.provider
+        let response = self
+            .provider
             .chat_with_tools(&summary_messages, &[], &self.model, 0.3)
             .await?;
 
@@ -1423,7 +1479,11 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
                 if cm.role == "system" {
                     continue; // 跳过 system 消息
                 }
-                let role_label = if cm.role == "user" { "用户" } else { "助手" };
+                let role_label = if cm.role == "user" {
+                    "用户"
+                } else {
+                    "助手"
+                };
                 let content = if cm.content.len() > 500 {
                     truncate_str(&cm.content, 500)
                 } else {
@@ -1431,7 +1491,9 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
                 };
                 out.push_str(&format!("[{}]: {}\n\n", role_label, content));
             }
-            ConversationMessage::AssistantToolCalls { text, tool_calls, .. } => {
+            ConversationMessage::AssistantToolCalls {
+                text, tool_calls, ..
+            } => {
                 if let Some(t) = text {
                     if !t.is_empty() {
                         out.push_str(&format!("[助手]: {}\n", t));
@@ -1463,18 +1525,28 @@ fn format_history_for_summary(messages: &[ConversationMessage]) -> String {
 /// - memory_recall 返回的是之前我们自己存储的记忆，行数多但完全可信
 /// - skill / self_info / config 返回格式化的系统信息
 fn needs_injection_check(tool_name: &str) -> bool {
-    matches!(tool_name, "shell" | "file_read" | "file_write" | "git" | "http_request")
+    matches!(
+        tool_name,
+        "shell" | "file_read" | "file_write" | "git" | "http_request"
+    )
 }
 
 /// P7-3: 检测工具调用缺少的必填参数
 ///
 /// 根据工具的 JSON Schema `required` 字段，返回 `args` 中缺失的参数名列表。
 /// 如果 schema 没有 `required` 字段，或所有必填参数都已提供，返回空 Vec。
-fn find_missing_required_params(schema: &serde_json::Value, args: &serde_json::Value) -> Vec<String> {
+fn find_missing_required_params(
+    schema: &serde_json::Value,
+    args: &serde_json::Value,
+) -> Vec<String> {
     let required = schema
         .get("required")
         .and_then(|r| r.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
 
     if required.is_empty() {
@@ -1484,7 +1556,11 @@ fn find_missing_required_params(schema: &serde_json::Value, args: &serde_json::V
     let args_obj = args.as_object();
     required
         .into_iter()
-        .filter(|r| !args_obj.map(|o| o.contains_key(r.as_str())).unwrap_or(false))
+        .filter(|r| {
+            !args_obj
+                .map(|o| o.contains_key(r.as_str()))
+                .unwrap_or(false)
+        })
         .collect()
 }
 
@@ -2280,7 +2356,7 @@ mod tests {
     #[test]
     fn parse_route_result_clarification() {
         let result = parse_route_result(
-            r#"{"skills": [], "direct": false, "question": "你是想查看还是提交？"}"#
+            r#"{"skills": [], "direct": false, "question": "你是想查看还是提交？"}"#,
         );
         assert!(matches!(result, RouteResult::NeedClarification(q) if q.contains("查看")));
     }
@@ -2300,9 +2376,8 @@ mod tests {
 
     #[test]
     fn parse_route_result_multiple_skills() {
-        let result = parse_route_result(
-            r#"{"skills": ["git-commit", "code-review"], "direct": false}"#
-        );
+        let result =
+            parse_route_result(r#"{"skills": ["git-commit", "code-review"], "direct": false}"#);
         match result {
             RouteResult::Skills(s) => assert_eq!(s.len(), 2),
             _ => panic!("expected Skills"),
@@ -2377,8 +2452,12 @@ mod tests {
 
     fn fill_history(agent: &mut Agent, count: usize) {
         for i in 0..count {
-            agent.history.push(make_chat("user", &format!("消息 {}", i)));
-            agent.history.push(make_chat("assistant", &format!("回复 {}", i)));
+            agent
+                .history
+                .push(make_chat("user", &format!("消息 {}", i)));
+            agent
+                .history
+                .push(make_chat("assistant", &format!("回复 {}", i)));
         }
     }
 
@@ -2391,8 +2470,12 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
-            "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![], None,
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
         );
         fill_history(&mut agent, 19); // 38 条
         let original_len = agent.history.len();
@@ -2414,8 +2497,12 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
-            "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![], None,
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
         );
         fill_history(&mut agent, 20); // 40 条
         agent.compact_history_if_needed().await;
@@ -2433,7 +2520,7 @@ mod tests {
     async fn compaction_fallback_to_trim_on_llm_failure() {
         // LLM 返回空响应 → 触发 fallback trim_history
         let empty_response = ChatResponse {
-            text: None,  // 空响应触发 summarize_history 报错
+            text: None, // 空响应触发 summarize_history 报错
             reasoning_content: None,
             tool_calls: vec![],
         };
@@ -2443,8 +2530,12 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
-            "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![], None,
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
         );
         fill_history(&mut agent, 25); // 50 条
         agent.compact_history_if_needed().await;
@@ -2466,22 +2557,40 @@ mod tests {
             vec![],
             Box::new(MockMemory),
             test_policy(),
-            "test".to_string(), "http://test".to_string(),
-            "test-model".to_string(), 0.7, vec![], None,
+            "test".to_string(),
+            "http://test".to_string(),
+            "test-model".to_string(),
+            0.7,
+            vec![],
+            None,
         );
         fill_history(&mut agent, 20); // 40 条
-        // 记录最后 10 条内容
-        let last_10: Vec<String> = agent.history[30..].iter().map(|m| {
-            if let ConversationMessage::Chat(cm) = m { cm.content.clone() } else { String::new() }
-        }).collect();
+                                      // 记录最后 10 条内容
+        let last_10: Vec<String> = agent.history[30..]
+            .iter()
+            .map(|m| {
+                if let ConversationMessage::Chat(cm) = m {
+                    cm.content.clone()
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
 
         agent.compact_history_if_needed().await;
 
         // 最近 10 条应在压缩后 history 的末尾
         let after_len = agent.history.len();
-        let recent: Vec<String> = agent.history[(after_len - 10)..].iter().map(|m| {
-            if let ConversationMessage::Chat(cm) = m { cm.content.clone() } else { String::new() }
-        }).collect();
+        let recent: Vec<String> = agent.history[(after_len - 10)..]
+            .iter()
+            .map(|m| {
+                if let ConversationMessage::Chat(cm) = m {
+                    cm.content.clone()
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
         assert_eq!(last_10, recent);
     }
 
@@ -2495,9 +2604,16 @@ mod tests {
             ConversationMessage::AssistantToolCalls {
                 text: None,
                 reasoning_content: None,
-                tool_calls: vec![ToolCall { id: "1".into(), name: "shell".into(), arguments: serde_json::json!({}) }],
+                tool_calls: vec![ToolCall {
+                    id: "1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({}),
+                }],
             },
-            ConversationMessage::ToolResult { tool_call_id: "1".into(), content: "结果".into() },
+            ConversationMessage::ToolResult {
+                tool_call_id: "1".into(),
+                content: "结果".into(),
+            },
             make_chat("user", "谢谢"),
         ];
         // ideal_end=3 时应退到 2（Chat 消息后），不截断 ToolCalls+ToolResult 对
@@ -2542,11 +2658,16 @@ mod tests {
             ConversationMessage::AssistantToolCalls {
                 text: Some("我来执行".to_string()),
                 reasoning_content: None,
-                tool_calls: vec![
-                    ToolCall { id: "1".into(), name: "shell".into(), arguments: serde_json::json!({}) },
-                ],
+                tool_calls: vec![ToolCall {
+                    id: "1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({}),
+                }],
             },
-            ConversationMessage::ToolResult { tool_call_id: "1".into(), content: "output".into() },
+            ConversationMessage::ToolResult {
+                tool_call_id: "1".into(),
+                content: "output".into(),
+            },
         ];
         let output = format_history_for_summary(&messages);
         assert!(output.contains("shell"));
@@ -2576,18 +2697,36 @@ mod tests {
         agent.set_routine_name("tesla_stock_monitor".to_string());
         let prompt = agent.build_system_prompt(&[]);
         // Tests run in English mode
-        assert!(prompt.contains("[Routine Execution Rules]"), "should contain routine rules section");
-        assert!(prompt.contains("tesla_stock_monitor"), "should contain routine name");
-        assert!(prompt.contains("memory_store"), "should contain memory_store instruction");
-        assert!(prompt.contains("routine:tesla_stock_monitor:approach"), "should contain correct key");
+        assert!(
+            prompt.contains("[Routine Execution Rules]"),
+            "should contain routine rules section"
+        );
+        assert!(
+            prompt.contains("tesla_stock_monitor"),
+            "should contain routine name"
+        );
+        assert!(
+            prompt.contains("memory_store"),
+            "should contain memory_store instruction"
+        );
+        assert!(
+            prompt.contains("routine:tesla_stock_monitor:approach"),
+            "should contain correct key"
+        );
     }
 
     #[test]
     fn routine_system_prompt_absent_in_normal_mode() {
         let agent = make_agent_no_skills();
         let prompt = agent.build_system_prompt(&[]);
-        assert!(!prompt.contains("[Routine Execution Rules]"), "normal mode should not contain routine rules");
-        assert!(!prompt.contains("[Routine 执行规范]"), "normal mode should not contain routine rules (zh)");
+        assert!(
+            !prompt.contains("[Routine Execution Rules]"),
+            "normal mode should not contain routine rules"
+        );
+        assert!(
+            !prompt.contains("[Routine 执行规范]"),
+            "normal mode should not contain routine rules (zh)"
+        );
     }
 
     #[test]
@@ -2596,9 +2735,15 @@ mod tests {
         agent.set_routine_name("first".to_string());
         agent.set_routine_name("second".to_string());
         let prompt = agent.build_system_prompt(&[]);
-        assert!(prompt.contains("second"), "should contain current routine name");
+        assert!(
+            prompt.contains("second"),
+            "should contain current routine name"
+        );
         // Check the routine name specifically in context, not as any substring
-        assert!(!prompt.contains("task 'first'"), "should not contain old routine name in task context");
+        assert!(
+            !prompt.contains("task 'first'"),
+            "should not contain old routine name in task context"
+        );
     }
 
     // --- summarize_history 测试 ---
@@ -2611,8 +2756,16 @@ mod tests {
             tool_calls: vec![],
         }]);
         let agent = Agent::new(
-            Box::new(provider), vec![], Box::new(MockMemory),
-            test_policy(), "t".into(), "h".into(), "m".into(), 0.7, vec![], None,
+            Box::new(provider),
+            vec![],
+            Box::new(MockMemory),
+            test_policy(),
+            "t".into(),
+            "h".into(),
+            "m".into(),
+            0.7,
+            vec![],
+            None,
         );
         let messages = vec![make_chat("user", "你好")];
         let result = agent.summarize_history(&messages).await.unwrap();
@@ -2704,7 +2857,11 @@ mod tests {
         let args = serde_json::json!({});
         let mut missing = find_missing_required_params(&schema, &args);
         missing.sort();
-        assert_eq!(missing, vec!["a".to_string(), "b".to_string()], "应返回所有缺失参数");
+        assert_eq!(
+            missing,
+            vec!["a".to_string(), "b".to_string()],
+            "应返回所有缺失参数"
+        );
     }
 
     // --- P7-3: schema 动态扩展集成测试 ---

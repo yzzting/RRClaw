@@ -50,7 +50,10 @@ impl AgentFactory {
         // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
         let raw_provider_for_arc = crate::providers::create_provider(provider_config);
         let provider_arc: Arc<dyn crate::providers::Provider> = if fallback_providers.is_empty() {
-            Arc::new(ReliableProvider::new(raw_provider_for_arc, retry_config.clone()))
+            Arc::new(ReliableProvider::new(
+                raw_provider_for_arc,
+                retry_config.clone(),
+            ))
         } else {
             let fallback_providers_arc: Vec<Box<dyn crate::providers::Provider>> = self
                 .config
@@ -93,7 +96,7 @@ impl AgentFactory {
             config_path,
             vec![], // Telegram 暂不加载 skills
             self.memory.clone() as Arc<dyn Memory>,
-            None,   // Telegram channel 暂不集成 RoutineTool
+            None, // Telegram channel 暂不集成 RoutineTool
         );
         let policy = SecurityPolicy {
             autonomy: self.config.security.autonomy.clone(),
@@ -126,10 +129,9 @@ impl AgentFactory {
 
 /// 运行 Telegram Bot
 pub async fn run_telegram(config: Config, memory: Arc<SqliteMemory>) -> Result<()> {
-    let telegram_config = config
-        .telegram
-        .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("Telegram 未配置。请在 config.toml 中添加 [telegram] 配置。"))?;
+    let telegram_config = config.telegram.as_ref().ok_or_else(|| {
+        color_eyre::eyre::eyre!("Telegram 未配置。请在 config.toml 中添加 [telegram] 配置。")
+    })?;
 
     let bot_token = telegram_config
         .bot_token
@@ -155,8 +157,7 @@ pub async fn run_telegram(config: Config, memory: Arc<SqliteMemory>) -> Result<(
             // 检查访问权限
             if !allowed_ids.is_empty() && !allowed_ids.contains(&chat_id.0) {
                 debug!("拒绝未授权 chat: {}", chat_id);
-                bot.send_message(chat_id, "⛔ 未授权的 Chat ID")
-                    .await?;
+                bot.send_message(chat_id, "⛔ 未授权的 Chat ID").await?;
                 return Ok(());
             }
 
@@ -197,8 +198,7 @@ pub async fn run_telegram(config: Config, memory: Arc<SqliteMemory>) -> Result<(
                 }
                 Err(e) => {
                     warn!("处理消息失败 [chat={}]: {:#}", chat_id, e);
-                    bot.send_message(chat_id, format!("❌ 错误: {}", e))
-                        .await?;
+                    bot.send_message(chat_id, format!("❌ 错误: {}", e)).await?;
                 }
             }
 

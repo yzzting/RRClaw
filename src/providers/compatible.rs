@@ -42,7 +42,11 @@ impl CompatibleProvider {
 
         for msg in messages {
             match msg {
-                ConversationMessage::Chat(ChatMessage { role, content, reasoning_content }) => {
+                ConversationMessage::Chat(ChatMessage {
+                    role,
+                    content,
+                    reasoning_content,
+                }) => {
                     let mut obj = serde_json::json!({
                         "role": role,
                         "content": content,
@@ -55,7 +59,11 @@ impl CompatibleProvider {
                     }
                     result.push(obj);
                 }
-                ConversationMessage::AssistantToolCalls { text, reasoning_content, tool_calls } => {
+                ConversationMessage::AssistantToolCalls {
+                    text,
+                    reasoning_content,
+                    tool_calls,
+                } => {
                     let mut obj = serde_json::json!({
                         "role": "assistant",
                     });
@@ -157,7 +165,11 @@ impl CompatibleProvider {
 
         // 分别提取 text 和 reasoning_content（不再合并）
         let text = choice.message.content.clone().filter(|s| !s.is_empty());
-        let reasoning_content = choice.message.reasoning_content.clone().filter(|s| !s.is_empty());
+        let reasoning_content = choice
+            .message
+            .reasoning_content
+            .clone()
+            .filter(|s| !s.is_empty());
         let tool_calls = choice
             .message
             .tool_calls
@@ -174,7 +186,11 @@ impl CompatibleProvider {
             })
             .unwrap_or_default();
 
-        ChatResponse { text, reasoning_content, tool_calls }
+        ChatResponse {
+            text,
+            reasoning_content,
+            tool_calls,
+        }
     }
 }
 
@@ -190,7 +206,10 @@ impl Provider for CompatibleProvider {
         let body = Self::build_request_body(messages, tools, model, temperature, false);
 
         debug!("API 请求: {} model={}", self.endpoint(), model);
-        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        trace!(
+            "请求体: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
 
         let resp = self
             .client
@@ -233,7 +252,10 @@ impl Provider for CompatibleProvider {
         let body = Self::build_request_body(messages, tools, model, temperature, true);
 
         debug!("API 流式请求: {} model={}", self.endpoint(), model);
-        trace!("请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        trace!(
+            "请求体: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
 
         let resp = self
             .client
@@ -260,7 +282,7 @@ impl Provider for CompatibleProvider {
         // 累积状态
         let mut full_text = String::new();
         let mut full_reasoning = String::new(); // reasoning_content 单独累积
-        // tool_calls 累积: index → (id, name, arguments_buffer)
+                                                // tool_calls 累积: index → (id, name, arguments_buffer)
         let mut tool_calls_acc: Vec<(String, String, String)> = Vec::new();
         let mut line_buf = String::new();
 
@@ -300,11 +322,17 @@ impl Provider for CompatibleProvider {
 
                 if let Some(choice) = parsed.choices.first() {
                     // 文本增量: content 和 reasoning_content 分别累积
-                    if let Some(content) = choice.delta.content.as_deref().filter(|s| !s.is_empty()) {
+                    if let Some(content) = choice.delta.content.as_deref().filter(|s| !s.is_empty())
+                    {
                         full_text.push_str(content);
                         let _ = tx.send(StreamEvent::Text(content.to_string())).await;
                     }
-                    if let Some(rc) = choice.delta.reasoning_content.as_deref().filter(|s| !s.is_empty()) {
+                    if let Some(rc) = choice
+                        .delta
+                        .reasoning_content
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                    {
                         full_reasoning.push_str(rc);
                         let _ = tx.send(StreamEvent::Thinking).await;
                     }
@@ -332,10 +360,7 @@ impl Provider for CompatibleProvider {
                                         .send(StreamEvent::ToolCallDelta {
                                             index: idx,
                                             id: tc.id.clone(),
-                                            name: tc
-                                                .function
-                                                .as_ref()
-                                                .and_then(|f| f.name.clone()),
+                                            name: tc.function.as_ref().and_then(|f| f.name.clone()),
                                             arguments_delta: args.clone(),
                                         })
                                         .await;
@@ -639,26 +664,22 @@ mod tests {
 
     #[test]
     fn build_messages_passes_reasoning_content() {
-        let msgs = vec![
-            ConversationMessage::Chat(ChatMessage {
-                role: "assistant".to_string(),
-                content: "回答".to_string(),
-                reasoning_content: Some("我的思考过程".to_string()),
-            }),
-        ];
+        let msgs = vec![ConversationMessage::Chat(ChatMessage {
+            role: "assistant".to_string(),
+            content: "回答".to_string(),
+            reasoning_content: Some("我的思考过程".to_string()),
+        })];
         let built = CompatibleProvider::build_messages(&msgs);
         assert_eq!(built[0]["reasoning_content"], "我的思考过程");
     }
 
     #[test]
     fn build_messages_omits_none_reasoning_content() {
-        let msgs = vec![
-            ConversationMessage::Chat(ChatMessage {
-                role: "assistant".to_string(),
-                content: "回答".to_string(),
-                reasoning_content: None,
-            }),
-        ];
+        let msgs = vec![ConversationMessage::Chat(ChatMessage {
+            role: "assistant".to_string(),
+            content: "回答".to_string(),
+            reasoning_content: None,
+        })];
         let built = CompatibleProvider::build_messages(&msgs);
         // reasoning_content 为 None 时不应出现在 JSON 中
         assert!(built[0].get("reasoning_content").is_none());
@@ -667,48 +688,45 @@ mod tests {
     #[test]
     fn build_messages_user_msg_no_reasoning() {
         // user/system 消息不应包含 reasoning_content
-        let msgs = vec![
-            ConversationMessage::Chat(ChatMessage {
-                role: "user".to_string(),
-                content: "你好".to_string(),
-                reasoning_content: None,
-            }),
-        ];
+        let msgs = vec![ConversationMessage::Chat(ChatMessage {
+            role: "user".to_string(),
+            content: "你好".to_string(),
+            reasoning_content: None,
+        })];
         let built = CompatibleProvider::build_messages(&msgs);
         assert!(built[0].get("reasoning_content").is_none());
     }
 
     #[test]
     fn build_messages_tool_calls_with_reasoning() {
-        let msgs = vec![
-            ConversationMessage::AssistantToolCalls {
-                text: Some("让我查一下".to_string()),
-                reasoning_content: Some("用户问了天气，我需要调用工具".to_string()),
-                tool_calls: vec![ToolCall {
-                    id: "call_1".to_string(),
-                    name: "shell".to_string(),
-                    arguments: serde_json::json!({"command": "date"}),
-                }],
-            },
-        ];
+        let msgs = vec![ConversationMessage::AssistantToolCalls {
+            text: Some("让我查一下".to_string()),
+            reasoning_content: Some("用户问了天气，我需要调用工具".to_string()),
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "shell".to_string(),
+                arguments: serde_json::json!({"command": "date"}),
+            }],
+        }];
         let built = CompatibleProvider::build_messages(&msgs);
-        assert_eq!(built[0]["reasoning_content"], "用户问了天气，我需要调用工具");
+        assert_eq!(
+            built[0]["reasoning_content"],
+            "用户问了天气，我需要调用工具"
+        );
         assert_eq!(built[0]["role"], "assistant");
     }
 
     #[test]
     fn build_messages_tool_calls_without_reasoning() {
-        let msgs = vec![
-            ConversationMessage::AssistantToolCalls {
-                text: None,
-                reasoning_content: None,
-                tool_calls: vec![ToolCall {
-                    id: "call_1".to_string(),
-                    name: "shell".to_string(),
-                    arguments: serde_json::json!({"command": "ls"}),
-                }],
-            },
-        ];
+        let msgs = vec![ConversationMessage::AssistantToolCalls {
+            text: None,
+            reasoning_content: None,
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "shell".to_string(),
+                arguments: serde_json::json!({"command": "ls"}),
+            }],
+        }];
         let built = CompatibleProvider::build_messages(&msgs);
         // 无 reasoning_content 时不应包含该字段
         assert!(built[0].get("reasoning_content").is_none());

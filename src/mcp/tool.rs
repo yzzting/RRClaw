@@ -30,11 +30,7 @@ pub struct McpTool {
 
 impl McpTool {
     /// 创建完整（L2）版本的 McpTool（与旧接口兼容）
-    pub fn new(
-        server_name: &str,
-        def: McpToolDef,
-        peer: Arc<Peer<RoleClient>>,
-    ) -> Self {
+    pub fn new(server_name: &str, def: McpToolDef, peer: Arc<Peer<RoleClient>>) -> Self {
         let mut tool = Self::new_l1(server_name, def, peer);
         tool.loaded = true;
         tool
@@ -44,11 +40,7 @@ impl McpTool {
     ///
     /// 只加载 name + 一句话简介，parameters_schema 返回极简占位 schema。
     /// 调用 `load_full_schema()` 后升级为完整 L2。
-    pub fn new_l1(
-        server_name: &str,
-        def: McpToolDef,
-        peer: Arc<Peer<RoleClient>>,
-    ) -> Self {
+    pub fn new_l1(server_name: &str, def: McpToolDef, peer: Arc<Peer<RoleClient>>) -> Self {
         let original_name = def.name.to_string();
         let prefixed_name = format!("mcp_{}_{}", server_name, original_name);
 
@@ -158,7 +150,11 @@ impl Tool for McpTool {
 
                 Ok(ToolResult {
                     success: !is_error,
-                    output: if is_error { String::new() } else { output.clone() },
+                    output: if is_error {
+                        String::new()
+                    } else {
+                        output.clone()
+                    },
                     error: if is_error { Some(output) } else { None },
                     ..Default::default()
                 })

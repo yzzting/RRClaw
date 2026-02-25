@@ -185,7 +185,10 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
         return Ok(ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("Cannot set config key '{}': path does not exist or is invalid", key)),
+            error: Some(format!(
+                "Cannot set config key '{}': path does not exist or is invalid",
+                key
+            )),
             ..Default::default()
         });
     }
@@ -194,7 +197,10 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
 
     Ok(ToolResult {
         success: true,
-        output: format!("Set {} to {}. Some settings require a restart to take effect.", key, value),
+        output: format!(
+            "Set {} to {}. Some settings require a restart to take effect.",
+            key, value
+        ),
         error: None,
         ..Default::default()
     })
@@ -249,7 +255,10 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
 }
 
 /// 在 TOML 文档中按路径导航获取值
-fn navigate_toml<'a>(doc: &'a toml_edit::DocumentMut, parts: &[&str]) -> Option<&'a toml_edit::Item> {
+fn navigate_toml<'a>(
+    doc: &'a toml_edit::DocumentMut,
+    parts: &[&str],
+) -> Option<&'a toml_edit::Item> {
     let mut current: &toml_edit::Item = doc.as_item();
     for part in parts {
         current = current.get(part)?;
@@ -517,7 +526,11 @@ model = "test"
 "#;
         let mut doc = content.parse::<toml_edit::DocumentMut>().unwrap();
         // 测试创建数组
-        assert!(set_toml_value(&mut doc, &["security", "http_allowed_hosts"], r#"["localhost", "192.168.1.1"]"#));
+        assert!(set_toml_value(
+            &mut doc,
+            &["security", "http_allowed_hosts"],
+            r#"["localhost", "192.168.1.1"]"#
+        ));
         // 验证数组已创建
         let arr = doc["security"]["http_allowed_hosts"].as_array();
         assert!(arr.is_some());
@@ -529,11 +542,7 @@ model = "test"
     fn config_append_adds_new_section() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.toml");
-        std::fs::write(
-            &config_path,
-            "[default]\nprovider = \"deepseek\"\n",
-        )
-        .unwrap();
+        std::fs::write(&config_path, "[default]\nprovider = \"deepseek\"\n").unwrap();
 
         // 测试 config_append 的核心逻辑：追加后文件包含新 section
         let new_toml = "[mcp.servers.test]\ntransport = \"stdio\"\ncommand = \"npx\"\n";

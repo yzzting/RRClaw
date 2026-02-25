@@ -10,20 +10,16 @@ struct IdentityFile {
 }
 
 /// 全局身份文件（相对于 data_dir，即 ~/.rrclaw/）
-const GLOBAL_FILES: &[IdentityFile] = &[
-    IdentityFile {
-        section_name: "用户偏好",
-        relative_path: "USER.md",
-    },
-];
+const GLOBAL_FILES: &[IdentityFile] = &[IdentityFile {
+    section_name: "用户偏好",
+    relative_path: "USER.md",
+}];
 
 /// 项目身份文件（相对于 workspace_dir）
-const PROJECT_FILES: &[IdentityFile] = &[
-    IdentityFile {
-        section_name: "项目行为约定",
-        relative_path: ".rrclaw/AGENT.md",
-    },
-];
+const PROJECT_FILES: &[IdentityFile] = &[IdentityFile {
+    section_name: "项目行为约定",
+    relative_path: ".rrclaw/AGENT.md",
+}];
 
 /// 人格文件（项目优先，全局兜底）
 const SOUL_GLOBAL: &str = "SOUL.md";

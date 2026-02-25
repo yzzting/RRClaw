@@ -195,7 +195,11 @@ pub fn load_skills(
     // 按优先级合并（后者被前者覆盖）：内置 → 全局 → 项目
     let mut result: Vec<SkillMeta> = Vec::new();
 
-    for skill in builtin.into_iter().chain(global_skills).chain(project_skills) {
+    for skill in builtin
+        .into_iter()
+        .chain(global_skills)
+        .chain(project_skills)
+    {
         if let Some(pos) = result.iter().position(|s| s.name == skill.name) {
             result[pos] = skill; // 高优先级覆盖
         } else {
@@ -209,7 +213,11 @@ pub fn load_skills(
 }
 
 /// 按需加载完整 skill 内容（L2 指令 + L3 文件清单）
-pub fn load_skill_content(name: &str, skills: &[SkillMeta], lang: Language) -> Result<SkillContent> {
+pub fn load_skill_content(
+    name: &str,
+    skills: &[SkillMeta],
+    lang: Language,
+) -> Result<SkillContent> {
     let meta = skills
         .iter()
         .find(|s| s.name == name)
@@ -219,13 +227,21 @@ pub fn load_skill_content(name: &str, skills: &[SkillMeta], lang: Language) -> R
                 eyre!(
                     "Skill '{}' not found. Available: {}",
                     name,
-                    if available.is_empty() { "(none)".to_string() } else { available.join(", ") }
+                    if available.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        available.join(", ")
+                    }
                 )
             } else {
                 eyre!(
                     "未找到技能 '{}'。可用技能: {}",
                     name,
-                    if available.is_empty() { "（无）".to_string() } else { available.join(", ") }
+                    if available.is_empty() {
+                        "（无）".to_string()
+                    } else {
+                        available.join(", ")
+                    }
                 )
             }
         })?
@@ -450,11 +466,21 @@ mod tests {
         let global_tmp = tempdir().unwrap();
         let workspace_tmp = tempdir().unwrap();
 
-        write_skill(global_tmp.path(), "my-skill", "全局版本，测试用。", "全局指令");
+        write_skill(
+            global_tmp.path(),
+            "my-skill",
+            "全局版本，测试用。",
+            "全局指令",
+        );
 
         let project_skills_dir = workspace_tmp.path().join(".rrclaw").join("skills");
         std::fs::create_dir_all(&project_skills_dir).unwrap();
-        write_skill(&project_skills_dir, "my-skill", "项目版本，测试用。", "项目指令");
+        write_skill(
+            &project_skills_dir,
+            "my-skill",
+            "项目版本，测试用。",
+            "项目指令",
+        );
 
         let skills = load_skills(workspace_tmp.path(), global_tmp.path(), vec![]);
         assert_eq!(skills.len(), 1);
@@ -501,7 +527,12 @@ mod tests {
             path: None,
         }];
 
-        write_skill(global_tmp.path(), "global-only", "全局独有，测试用。", "指令");
+        write_skill(
+            global_tmp.path(),
+            "global-only",
+            "全局独有，测试用。",
+            "指令",
+        );
 
         let project_dir = workspace_tmp.path().join(".rrclaw").join("skills");
         std::fs::create_dir_all(&project_dir).unwrap();
@@ -529,7 +560,11 @@ mod tests {
         assert!(names.contains(&"find-skills"));
         // 所有内置 skill 都应有非空 description
         for s in &skills {
-            assert!(!s.description.is_empty(), "skill '{}' description 为空", s.name);
+            assert!(
+                !s.description.is_empty(),
+                "skill '{}' description 为空",
+                s.name
+            );
         }
     }
 
@@ -541,7 +576,8 @@ mod tests {
             assert!(
                 !s.description.chars().any(|c| c as u32 > 0x4E00),
                 "skill '{}' English description contains Chinese: {}",
-                s.name, s.description
+                s.name,
+                s.description
             );
         }
     }
@@ -550,8 +586,13 @@ mod tests {
     fn builtin_skills_chinese_descriptions_are_chinese() {
         let skills = builtin_skills(Language::Chinese);
         // At least one skill description should contain Chinese characters
-        let has_chinese = skills.iter().any(|s| s.description.chars().any(|c| c as u32 > 0x4E00));
-        assert!(has_chinese, "Chinese builtin skills should have Chinese descriptions");
+        let has_chinese = skills
+            .iter()
+            .any(|s| s.description.chars().any(|c| c as u32 > 0x4E00));
+        assert!(
+            has_chinese,
+            "Chinese builtin skills should have Chinese descriptions"
+        );
     }
 
     // --- load_skill_content 测试 ---
@@ -584,7 +625,12 @@ mod tests {
     #[test]
     fn load_filesystem_skill_content() {
         let tmp = tempdir().unwrap();
-        write_skill(tmp.path(), "test-skill", "测试技能，测试用。", "这是详细指令。");
+        write_skill(
+            tmp.path(),
+            "test-skill",
+            "测试技能，测试用。",
+            "这是详细指令。",
+        );
 
         let skills = scan_skills_dir(tmp.path(), SkillSource::Global);
         let content = load_skill_content("test-skill", &skills, Language::English).unwrap();

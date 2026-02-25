@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
+use super::traits::{Tool, ToolResult};
 use crate::providers::traits::{ChatMessage, ConversationMessage, Provider};
 use crate::security::SecurityPolicy;
-use super::traits::{Tool, ToolResult};
 
 /// 响应体最大字节数（1 MiB）
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -36,7 +36,11 @@ pub struct HttpRequestTool {
 
 impl HttpRequestTool {
     /// 创建新的 HttpRequestTool
-    pub fn new(provider: Option<Arc<dyn Provider>>, model: String, strip_threshold_bytes: usize) -> Self {
+    pub fn new(
+        provider: Option<Arc<dyn Provider>>,
+        model: String,
+        strip_threshold_bytes: usize,
+    ) -> Self {
         Self {
             provider,
             model,
@@ -192,10 +196,7 @@ impl Tool for HttpRequestTool {
 
         if let Some(headers_obj) = args.get("headers").and_then(|v| v.as_object()) {
             for (key, val) in headers_obj {
-                if let (Ok(name), Some(value)) = (
-                    HeaderName::from_str(key),
-                    val.as_str(),
-                ) {
+                if let (Ok(name), Some(value)) = (HeaderName::from_str(key), val.as_str()) {
                     if let Ok(hv) = HeaderValue::from_str(value) {
                         header_map.insert(name, hv);
                     } else {
@@ -251,20 +252,18 @@ impl Tool for HttpRequestTool {
         };
 
         let status = response.status();
-        let status_line = format!("HTTP {} {}", status.as_u16(), status.canonical_reason().unwrap_or(""));
+        let status_line = format!(
+            "HTTP {} {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("")
+        );
 
         // 读取响应 headers（只取前 20 个，避免过长）
         let resp_headers: Vec<String> = response
             .headers()
             .iter()
             .take(20)
-            .map(|(k, v)| {
-                format!(
-                    "{}: {}",
-                    k,
-                    v.to_str().unwrap_or("<binary>")
-                )
-            })
+            .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("<binary>")))
             .collect();
 
         // 按字节流读取 body，限制大小
@@ -334,7 +333,8 @@ impl Tool for HttpRequestTool {
                             Err(e) => {
                                 // mini-LLM 失败，降级为截断
                                 warn!("http_request: mini_extract 失败: {}", e);
-                                let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                                let truncated = &processed_body
+                                    [..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
                                 format!(
                                     "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n\n\
                                      [提示] mini-LLM 提取失败: {}",
@@ -344,7 +344,8 @@ impl Tool for HttpRequestTool {
                         }
                     } else {
                         // 无 provider：降级为截断
-                        let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                        let truncated =
+                            &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
                         format!(
                             "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n{}\n\n\
                              [提示] 页面 strip 后仍有 {}KB，可能是 SPA/动态页面。\
@@ -358,7 +359,8 @@ impl Tool for HttpRequestTool {
                 }
                 None => {
                     // 无 extract 参数：截断到 200KB + 明确警告
-                    let truncated = &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
+                    let truncated =
+                        &processed_body[..HTML_STRIP_MAX_BYTES.min(processed_body.len())];
                     format!(
                         "{}\n\n[Body（HTML strip 后，已截断至 200KB）]\n{}\n\n\
                          [提示] 页面 strip 后仍有 {}KB，可能是 SPA/动态页面。\
@@ -409,12 +411,12 @@ impl Tool for HttpRequestTool {
 
         Ok(ToolResult {
             success,
-            output: if success { output.clone() } else { String::new() },
-            error: if success {
-                None
+            output: if success {
+                output.clone()
             } else {
-                Some(output)
+                String::new()
             },
+            error: if success { None } else { Some(output) },
             ..Default::default()
         })
     }
@@ -439,22 +441,18 @@ async fn mini_extract(
             role: "system".to_string(),
             content: "你是一个精准的信息提取助手。从给定内容中提取用户指定的信息，\
                       只返回提取到的内容，不加解释，不加前缀。\
-                      如果找不到，返回\"未找到: {原因}\"。".to_string(),
+                      如果找不到，返回\"未找到: {原因}\"。"
+                .to_string(),
             reasoning_content: None,
         }),
         ConversationMessage::Chat(ChatMessage {
             role: "user".to_string(),
-            content: format!(
-                "从以下内容中提取：{}\n\n---\n{}",
-                hint, content_excerpt
-            ),
+            content: format!("从以下内容中提取：{}\n\n---\n{}", hint, content_excerpt),
             reasoning_content: None,
         }),
     ];
 
-    let resp = provider
-        .chat_with_tools(&messages, &[], model, 0.0)
-        .await?;
+    let resp = provider.chat_with_tools(&messages, &[], model, 0.0).await?;
 
     Ok(resp.text.unwrap_or_else(|| "（提取结果为空）".to_string()))
 }
@@ -473,10 +471,7 @@ fn check_ssrf_risk(host: &str, http_allowed_hosts: &[String]) -> Option<String> 
 
     // 1. 阻止 localhost 变体
     let host_lower = host.to_lowercase();
-    if host_lower == "localhost"
-        || host_lower == "ip6-localhost"
-        || host_lower == "ip6-loopback"
-    {
+    if host_lower == "localhost" || host_lower == "ip6-localhost" || host_lower == "ip6-loopback" {
         return Some(format!(
             "禁止访问 localhost（SSRF 防护）: {}|可使用 /config set security.http_allowed_hosts 添加 [\"{}\"] 到白名单",
             host, host
@@ -520,30 +515,24 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
             // 192.168.0.0/16 (RFC 1918)
             // 169.254.0.0/16 (link-local / 云元数据)
             // 0.0.0.0 (unspecified，仅精确匹配，非整个 /8 段)
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || {
-                    // 100.64.0.0/10 (CGNAT)
-                    let octets = v4.octets();
-                    octets[0] == 100 && (octets[1] & 0b1100_0000) == 64
-                }
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified() || {
+                // 100.64.0.0/10 (CGNAT)
+                let octets = v4.octets();
+                octets[0] == 100 && (octets[1] & 0b1100_0000) == 64
+            }
         }
         std::net::IpAddr::V6(v6) => {
             // ::1 (loopback)
             // :: (unspecified)
             // fc00::/7 (ULA, 私有)
             // fe80::/10 (link-local)
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || {
-                    let segments = v6.segments();
-                    // fc00::/7
-                    (segments[0] & 0xfe00) == 0xfc00
+            v6.is_loopback() || v6.is_unspecified() || {
+                let segments = v6.segments();
+                // fc00::/7
+                (segments[0] & 0xfe00) == 0xfc00
                     // fe80::/10
                     || (segments[0] & 0xffc0) == 0xfe80
-                }
+            }
         }
     }
 }

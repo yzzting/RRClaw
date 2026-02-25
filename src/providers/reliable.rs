@@ -55,7 +55,11 @@ impl ReliableProvider {
         fallbacks: Vec<Box<dyn Provider>>,
         config: RetryConfig,
     ) -> Self {
-        Self { inner, fallbacks, config }
+        Self {
+            inner,
+            fallbacks,
+            config,
+        }
     }
 }
 
@@ -189,7 +193,9 @@ async fn retry_with_backoff(
                     .await
             }
             StreamMode::NonStream => {
-                provider.chat_with_tools(messages, tools, model, temperature).await
+                provider
+                    .chat_with_tools(messages, tools, model, temperature)
+                    .await
             }
         };
 
@@ -237,9 +243,10 @@ async fn retry_with_backoff(
 fn is_retryable(err_str: &str) -> bool {
     // 明确不可重试的错误
     let non_retryable = [
-        "401", "403", // 认证/权限错误
-        "400",        // 请求参数错误
-        "404",        // 端点不存在
+        "401",
+        "403",             // 认证/权限错误
+        "400",             // 请求参数错误
+        "404",             // 端点不存在
         "invalid_api_key", // API key 无效
         "authentication",  // 认证失败
     ];
@@ -354,9 +361,7 @@ mod tests {
     async fn retries_and_succeeds() {
         // 失败 2 次后成功，max_retries=3，应该成功
         let provider = ReliableProvider::new(Box::new(FlakyProvider::new(2)), fast_retry());
-        let result = provider
-            .chat_with_tools(&[], &[], "m", 0.7)
-            .await;
+        let result = provider.chat_with_tools(&[], &[], "m", 0.7).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().text.as_deref(), Some("成功"));
     }
@@ -419,7 +424,10 @@ mod tests {
         );
         let result = provider.chat_with_tools(&[], &[], "m", 0.7).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("所有 Provider 均失败"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("所有 Provider 均失败"));
     }
 
     // --- is_retryable 测试 ---

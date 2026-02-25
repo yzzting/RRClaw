@@ -72,14 +72,9 @@ pub async fn make_test_engine(routines: Vec<Routine>) -> (Arc<RoutineEngine>, te
     let tmp = tempfile::tempdir().expect("创建临时目录失败");
     let db_path = tmp.path().join("test_routines.db");
 
-    let engine = RoutineEngine::new(
-        routines,
-        test_config(),
-        Arc::new(NoopMemory),
-        &db_path,
-    )
-    .await
-    .expect("创建 RoutineEngine 失败");
+    let engine = RoutineEngine::new(routines, test_config(), Arc::new(NoopMemory), &db_path)
+        .await
+        .expect("创建 RoutineEngine 失败");
 
     (Arc::new(engine), tmp)
 }
@@ -147,7 +142,10 @@ pub fn injection_policy(workspace: &Path) -> SecurityPolicy {
 }
 
 /// 创建包含 ShellTool + FileReadTool 的测试 Agent（E2-8 注入检测用）
-pub fn test_agent_with_file_tool(mock: MockProvider, policy: SecurityPolicy) -> rrclaw::agent::Agent {
+pub fn test_agent_with_file_tool(
+    mock: MockProvider,
+    policy: SecurityPolicy,
+) -> rrclaw::agent::Agent {
     rrclaw::agent::Agent::new(
         Box::new(mock),
         vec![

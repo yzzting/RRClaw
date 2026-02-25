@@ -48,7 +48,12 @@ pub fn create_tools(
         Box::new(FileReadTool),
         Box::new(FileWriteTool),
         Box::new(ConfigTool),
-        Box::new(SelfInfoTool::new(app_config.clone(), data_dir, log_dir, config_path)),
+        Box::new(SelfInfoTool::new(
+            app_config.clone(),
+            data_dir,
+            log_dir,
+            config_path,
+        )),
         Box::new(SkillTool::new(skills)),
         Box::new(GitTool),
         Box::new(MemoryStoreTool::new(memory.clone())),

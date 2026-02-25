@@ -64,13 +64,10 @@ async fn run_agent(
     provider_name: Option<String>,
     model_override: Option<String>,
 ) -> Result<()> {
-    let config = rrclaw::config::Config::load_or_init()
-        .wrap_err("加载配置失败")?;
+    let config = rrclaw::config::Config::load_or_init().wrap_err("加载配置失败")?;
 
     // 确定使用的 provider
-    let provider_key = provider_name
-        .as_deref()
-        .unwrap_or(&config.default.provider);
+    let provider_key = provider_name.as_deref().unwrap_or(&config.default.provider);
 
     let provider_config = config
         .providers
@@ -84,8 +81,7 @@ async fn run_agent(
         })?;
 
     // 确定模型
-    let model = model_override
-        .unwrap_or_else(|| config.default.model.clone());
+    let model = model_override.unwrap_or_else(|| config.default.model.clone());
 
     // 创建 Provider
     let main_provider = rrclaw::providers::create_provider(provider_config);
@@ -107,19 +103,18 @@ async fn run_agent(
     };
 
     // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
-    let provider_arc: Arc<dyn rrclaw::providers::Provider> =
-        if fallback_providers.is_empty() {
-            Arc::new(rrclaw::providers::ReliableProvider::new(
-                main_provider,
-                retry_config.clone(),
-            ))
-        } else {
-            Arc::new(rrclaw::providers::ReliableProvider::with_fallbacks(
-                main_provider,
-                fallback_providers,
-                retry_config.clone(),
-            ))
-        };
+    let provider_arc: Arc<dyn rrclaw::providers::Provider> = if fallback_providers.is_empty() {
+        Arc::new(rrclaw::providers::ReliableProvider::new(
+            main_provider,
+            retry_config.clone(),
+        ))
+    } else {
+        Arc::new(rrclaw::providers::ReliableProvider::with_fallbacks(
+            main_provider,
+            fallback_providers,
+            retry_config.clone(),
+        ))
+    };
 
     // Box<dyn Provider> 用于 Agent（重新创建，因为上面的 main_provider 和 fallback_providers 已移动）
     let fallback_providers_for_box: Vec<Box<dyn rrclaw::providers::Provider>> = config
@@ -130,19 +125,18 @@ async fn run_agent(
         .map(|pc| rrclaw::providers::create_provider(pc))
         .collect();
     let main_provider_for_box = rrclaw::providers::create_provider(provider_config);
-    let provider: Box<dyn rrclaw::providers::Provider> =
-        if fallback_providers_for_box.is_empty() {
-            Box::new(rrclaw::providers::ReliableProvider::new(
-                main_provider_for_box,
-                retry_config,
-            ))
-        } else {
-            Box::new(rrclaw::providers::ReliableProvider::with_fallbacks(
-                main_provider_for_box,
-                fallback_providers_for_box,
-                retry_config,
-            ))
-        };
+    let provider: Box<dyn rrclaw::providers::Provider> = if fallback_providers_for_box.is_empty() {
+        Box::new(rrclaw::providers::ReliableProvider::new(
+            main_provider_for_box,
+            retry_config,
+        ))
+    } else {
+        Box::new(rrclaw::providers::ReliableProvider::with_fallbacks(
+            main_provider_for_box,
+            fallback_providers_for_box,
+            retry_config,
+        ))
+    };
 
     // 创建 Memory（Arc 共享给 Agent 和 CLI）
     let data_dir = data_dir()?;
@@ -160,10 +154,8 @@ async fn run_agent(
     let skills = rrclaw::skills::load_skills(&workspace_dir, &global_skills_dir, builtin);
 
     // 创建 Memory（Arc 共享给 Tools）
-    let memory = Arc::new(
-        rrclaw::memory::SqliteMemory::open(&data_dir)
-            .wrap_err("初始化 Memory 失败")?,
-    );
+    let memory =
+        Arc::new(rrclaw::memory::SqliteMemory::open(&data_dir).wrap_err("初始化 Memory 失败")?);
 
     // ─── RoutineEngine 初始化 ────────────────────────────────────────────
     // 构建 Routine 列表（从 config 的静态配置转换）
@@ -256,11 +248,12 @@ async fn run_agent(
 
     // ─── 身份文件加载（P5-2）────────────────────────────────────────────
     // identity 文件在 ~/.rrclaw/，而 data_dir 是 ~/.rrclaw/data/，取父目录
-    let rrclaw_home = data_dir.parent().unwrap_or(data_dir.as_path()).to_path_buf();
-    let identity_context = rrclaw::agent::identity::load_identity_context(
-        &policy.workspace_dir,
-        &rrclaw_home,
-    );
+    let rrclaw_home = data_dir
+        .parent()
+        .unwrap_or(data_dir.as_path())
+        .to_path_buf();
+    let identity_context =
+        rrclaw::agent::identity::load_identity_context(&policy.workspace_dir, &rrclaw_home);
     if identity_context.is_some() {
         tracing::info!("已加载用户身份文件");
     }
@@ -347,10 +340,7 @@ async fn run_cli_with_telegram(
     const RESET: &str = "\x1b[0m";
     const YELLOW: &str = "\x1b[33m";
 
-    println!(
-        "{}RRClaw{} AI 助手 - CLI + Telegram 模式",
-        CYAN, RESET
-    );
+    println!("{}RRClaw{} AI 助手 - CLI + Telegram 模式", CYAN, RESET);
     println!("CLI: 直接输入消息");
     println!("Telegram: 已启用，请向你的 Bot 发送消息");
     println!("输入 {}exit{} 退出\n", YELLOW, RESET);
@@ -395,14 +385,11 @@ async fn run_cli_with_telegram(
 }
 
 async fn run_telegram() -> Result<()> {
-    let config = rrclaw::config::Config::load_or_init()
-        .wrap_err("加载配置失败")?;
+    let config = rrclaw::config::Config::load_or_init().wrap_err("加载配置失败")?;
 
     let data_dir = data_dir()?;
-    let memory = Arc::new(
-        rrclaw::memory::SqliteMemory::open(&data_dir)
-            .wrap_err("初始化 Memory 失败")?,
-    );
+    let memory =
+        Arc::new(rrclaw::memory::SqliteMemory::open(&data_dir).wrap_err("初始化 Memory 失败")?);
 
     rrclaw::channels::telegram::run_telegram(config, memory).await
 }
@@ -430,8 +417,7 @@ fn run_config() -> Result<()> {
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&config_path)
-        .wrap_err("读取配置文件失败")?;
+    let content = std::fs::read_to_string(&config_path).wrap_err("读取配置文件失败")?;
     println!("配置文件: {}\n", config_path.display());
     println!("{}", content);
 

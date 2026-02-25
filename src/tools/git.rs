@@ -3,8 +3,8 @@ use color_eyre::eyre::{eyre, Result};
 use serde_json::json;
 use tracing::debug;
 
-use crate::security::SecurityPolicy;
 use super::traits::{Tool, ToolResult};
+use crate::security::SecurityPolicy;
 
 pub struct GitTool;
 
@@ -69,10 +69,7 @@ impl Tool for GitTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| eyre!("Missing 'action' parameter"))?;
 
-        let extra = args
-            .get("args")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let extra = args.get("args").and_then(|v| v.as_str()).unwrap_or("");
 
         let git_args = match build_git_args(action, extra) {
             Ok(args) => args,
@@ -86,7 +83,11 @@ impl Tool for GitTool {
             }
         };
 
-        debug!("执行 git {:?} in {}", git_args, policy.workspace_dir.display());
+        debug!(
+            "执行 git {:?} in {}",
+            git_args,
+            policy.workspace_dir.display()
+        );
 
         let output = tokio::process::Command::new("git")
             .args(&git_args)
@@ -111,7 +112,10 @@ impl Tool for GitTool {
                         success: false,
                         output: stdout,
                         error: Some(if stderr.is_empty() {
-                            format!("git exited with code: {}", output.status.code().unwrap_or(-1))
+                            format!(
+                                "git exited with code: {}",
+                                output.status.code().unwrap_or(-1)
+                            )
                         } else {
                             stderr
                         }),
@@ -132,17 +136,27 @@ impl Tool for GitTool {
 /// 根据 action + 额外参数构造 git 命令参数列表
 fn build_git_args(action: &str, extra: &str) -> Result<Vec<String>> {
     // 验证 action 合法性
-    let valid_actions = ["status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch"];
+    let valid_actions = [
+        "status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch",
+    ];
     if !valid_actions.contains(&action) {
-        return Err(eyre!("Unknown git action: '{}'. Supported: {}", action, valid_actions.join(", ")));
+        return Err(eyre!(
+            "Unknown git action: '{}'. Supported: {}",
+            action,
+            valid_actions.join(", ")
+        ));
     }
 
     let mut args = vec![action.to_string()];
 
     // 追加额外参数（安全拆分，处理引号）
     if !extra.is_empty() {
-        let extra_args = shell_words::split(extra)
-            .map_err(|e| eyre!("Failed to parse arguments: {}. Please check that quotes are balanced.", e))?;
+        let extra_args = shell_words::split(extra).map_err(|e| {
+            eyre!(
+                "Failed to parse arguments: {}. Please check that quotes are balanced.",
+                e
+            )
+        })?;
         args.extend(extra_args);
     }
 
@@ -155,7 +169,9 @@ mod tests {
     use crate::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_policy(workspace: &std::path::Path) -> SecurityPolicy {
-        let canonical = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        let canonical = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         SecurityPolicy {
             autonomy: AutonomyLevel::Full,
             allowed_commands: vec![],
@@ -196,7 +212,10 @@ mod tests {
     fn build_args_unknown_action() {
         let result = build_git_args("rebase", "-i HEAD~3");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown git action"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown git action"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use rmcp::service::{Peer, RoleClient, RunningService};
-use rmcp::transport::child_process::{TokioChildProcess, ConfigureCommandExt};
+use rmcp::transport::child_process::{ConfigureCommandExt, TokioChildProcess};
 use rmcp::ServiceExt;
 
 use crate::config::{McpServerConfig, McpTransport};
@@ -91,14 +91,15 @@ impl McpManager {
                         result.push(Box::new(mcp_tool));
                         count += 1;
                     }
-                    info!("MCP Server '{}' 加载了 {} 个工具（{}）", server.name, count,
-                        if lazy { "L1 懒加载" } else { "L2 完整" });
+                    info!(
+                        "MCP Server '{}' 加载了 {} 个工具（{}）",
+                        server.name,
+                        count,
+                        if lazy { "L1 懒加载" } else { "L2 完整" }
+                    );
                 }
                 Err(e) => {
-                    warn!(
-                        "获取 MCP Server '{}' 工具列表失败: {:#}",
-                        server.name, e
-                    );
+                    warn!("获取 MCP Server '{}' 工具列表失败: {:#}", server.name, e);
                 }
             }
         }
@@ -158,9 +159,10 @@ async fn connect_server(
                     transport_config.auth_header = Some(v.clone());
                 } else {
                     use reqwest::header::{HeaderName, HeaderValue};
-                    if let (Ok(hname), Ok(hvalue)) =
-                        (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v))
-                    {
+                    if let (Ok(hname), Ok(hvalue)) = (
+                        HeaderName::from_bytes(k.as_bytes()),
+                        HeaderValue::from_str(v),
+                    ) {
                         transport_config.custom_headers.insert(hname, hvalue);
                     }
                 }

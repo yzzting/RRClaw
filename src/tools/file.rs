@@ -49,7 +49,10 @@ impl Tool for FileReadTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Path not within allowed workspace: {}", path.display())),
+                error: Some(format!(
+                    "Path not within allowed workspace: {}",
+                    path.display()
+                )),
                 ..Default::default()
             });
         }
@@ -140,7 +143,10 @@ impl Tool for FileWriteTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Path not within allowed workspace: {}", path.display())),
+                error: Some(format!(
+                    "Path not within allowed workspace: {}",
+                    path.display()
+                )),
                 ..Default::default()
             });
         }
@@ -188,7 +194,9 @@ mod tests {
 
     fn test_policy(workspace: &std::path::Path) -> SecurityPolicy {
         // macOS: /var → /private/var, canonicalize 确保一致
-        let canonical = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        let canonical = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         SecurityPolicy {
             autonomy: AutonomyLevel::Full,
             allowed_commands: vec![],

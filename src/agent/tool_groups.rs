@@ -15,7 +15,16 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
     ToolGroup {
         name: "file_ops",
         keywords: &[
-            "文件", "读", "写", "改", "编辑", "查看代码", "代码", "read", "write", "edit",
+            "文件",
+            "读",
+            "写",
+            "改",
+            "编辑",
+            "查看代码",
+            "代码",
+            "read",
+            "write",
+            "edit",
             "file",
         ],
         tools: &["file_read", "file_write", "shell", "git"],
@@ -23,14 +32,15 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
     ToolGroup {
         name: "web",
         keywords: &[
-            "请求", "HTTP", "API", "天气", "网络", "http", "request", "fetch", "api", "url",
-            "URL",
+            "请求", "HTTP", "API", "天气", "网络", "http", "request", "fetch", "api", "url", "URL",
         ],
         tools: &["http_request"],
     },
     ToolGroup {
         name: "memory",
-        keywords: &["记住", "记忆", "存储", "recall", "store", "memory", "记得", "忘了"],
+        keywords: &[
+            "记住", "记忆", "存储", "recall", "store", "memory", "记得", "忘了",
+        ],
         tools: &["memory_store", "memory_recall", "memory_forget"],
     },
     ToolGroup {
@@ -40,7 +50,9 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
     },
     ToolGroup {
         name: "git_ops",
-        keywords: &["提交", "commit", "push", "pull", "分支", "branch", "git", "版本", "stash"],
+        keywords: &[
+            "提交", "commit", "push", "pull", "分支", "branch", "git", "版本", "stash",
+        ],
         tools: &["git", "shell"],
     },
     ToolGroup {
@@ -83,7 +95,11 @@ mod tests {
     #[test]
     fn file_keywords_route_to_file_ops() {
         let result = route_tools("帮我读一下这个文件");
-        assert!(result.contains(&"file_read".to_string()), "file_read missing: {:?}", result);
+        assert!(
+            result.contains(&"file_read".to_string()),
+            "file_read missing: {:?}",
+            result
+        );
         assert!(result.contains(&"file_write".to_string()));
         assert!(result.contains(&"shell".to_string()));
     }
@@ -91,28 +107,44 @@ mod tests {
     #[test]
     fn git_keywords_route_to_git_ops() {
         let result = route_tools("帮我 commit 一下改动");
-        assert!(result.contains(&"git".to_string()), "git missing: {:?}", result);
+        assert!(
+            result.contains(&"git".to_string()),
+            "git missing: {:?}",
+            result
+        );
         assert!(result.contains(&"shell".to_string()));
     }
 
     #[test]
     fn memory_keywords_route_to_memory() {
         let result = route_tools("请记住我的名字是张三");
-        assert!(result.contains(&"memory_store".to_string()), "memory_store missing: {:?}", result);
+        assert!(
+            result.contains(&"memory_store".to_string()),
+            "memory_store missing: {:?}",
+            result
+        );
         assert!(result.contains(&"memory_recall".to_string()));
     }
 
     #[test]
     fn config_keywords_route_to_config() {
         let result = route_tools("帮我配置一下 RRClaw");
-        assert!(result.contains(&"config".to_string()), "config missing: {:?}", result);
+        assert!(
+            result.contains(&"config".to_string()),
+            "config missing: {:?}",
+            result
+        );
         assert!(result.contains(&"self_info".to_string()));
     }
 
     #[test]
     fn routine_keywords_route_to_routine() {
         let result = route_tools("创建一个定时任务");
-        assert!(result.contains(&"routine".to_string()), "routine missing: {:?}", result);
+        assert!(
+            result.contains(&"routine".to_string()),
+            "routine missing: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -140,13 +172,21 @@ mod tests {
         // Both file_ops and git_ops include "shell"
         let result = route_tools("改代码然后 git commit");
         let shell_count = result.iter().filter(|t| t.as_str() == "shell").count();
-        assert_eq!(shell_count, 1, "shell should not be duplicated, got: {:?}", result);
+        assert_eq!(
+            shell_count, 1,
+            "shell should not be duplicated, got: {:?}",
+            result
+        );
     }
 
     #[test]
     fn english_keywords_also_work() {
         let result = route_tools("please read this file");
-        assert!(result.contains(&"file_read".to_string()), "file_read missing: {:?}", result);
+        assert!(
+            result.contains(&"file_read".to_string()),
+            "file_read missing: {:?}",
+            result
+        );
     }
 
     #[test]

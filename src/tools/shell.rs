@@ -144,7 +144,9 @@ mod tests {
     use crate::security::AutonomyLevel;
 
     fn test_policy(workspace: &std::path::Path) -> SecurityPolicy {
-        let canonical = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        let canonical = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         SecurityPolicy {
             autonomy: AutonomyLevel::Full,
             allowed_commands: vec!["ls", "echo", "cat", "pwd"]
@@ -221,9 +223,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let policy = test_policy(tmp.path());
 
-        let result = ShellTool
-            .execute(serde_json::json!({}), &policy)
-            .await;
+        let result = ShellTool.execute(serde_json::json!({}), &policy).await;
 
         assert!(result.is_err());
     }

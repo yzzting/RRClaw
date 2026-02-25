@@ -26,8 +26,8 @@ impl Default for SecurityPolicy {
         Self {
             autonomy: AutonomyLevel::Supervised,
             allowed_commands: vec![
-                "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc",
-                "cargo", "rustc",
+                "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc", "cargo",
+                "rustc",
             ]
             .into_iter()
             .map(String::from)
@@ -157,10 +157,7 @@ fn canonicalize_with_ancestors(path: &Path) -> PathBuf {
             Err(_) => {
                 if let Some(file_name) = current.file_name() {
                     suffix_parts.push(file_name.to_os_string());
-                    current = current
-                        .parent()
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or(current);
+                    current = current.parent().map(|p| p.to_path_buf()).unwrap_or(current);
                 } else {
                     // 到达根目录仍无法 canonicalize，返回原路径
                     return path.to_path_buf();

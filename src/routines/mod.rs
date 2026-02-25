@@ -89,16 +89,16 @@ fn default_enabled() -> bool {
 #[serde(rename_all = "lowercase")]
 pub enum RoutineSource {
     #[default]
-    Config,     // 来自 config.toml
-    Dynamic,    // 来自 /routine add 命令（持久化到 SQLite）
+    Config, // 来自 config.toml
+    Dynamic, // 来自 /routine add 命令（持久化到 SQLite）
 }
 
 /// 单次执行记录
 #[derive(Debug, Clone)]
 pub struct RoutineExecution {
     pub routine_name: String,
-    pub started_at: String,    // ISO 8601
-    pub finished_at: String,   // ISO 8601
+    pub started_at: String,  // ISO 8601
+    pub finished_at: String, // ISO 8601
     pub success: bool,
     pub output_preview: String, // 前 200 字符
     pub error: Option<String>,
@@ -117,7 +117,7 @@ pub struct RoutineExecution {
 pub struct RoutineEngine {
     routines: std::sync::RwLock<Vec<Routine>>,
     scheduler: JobScheduler,
-    scheduler_started: std::sync::Mutex<bool>,  // 跟踪调度器是否已启动
+    scheduler_started: std::sync::Mutex<bool>, // 跟踪调度器是否已启动
     config: Arc<Config>,
     memory: Arc<dyn Memory>,
     db: Arc<Mutex<Connection>>,
@@ -145,8 +145,8 @@ impl RoutineEngine {
         db_path: &std::path::Path,
     ) -> Result<Self> {
         // 初始化数据库
-        let conn = Connection::open(db_path)
-            .map_err(|e| eyre!("打开 Routines 数据库失败: {}", e))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| eyre!("打开 Routines 数据库失败: {}", e))?;
         Self::init_db(&conn)?;
 
         // 从 SQLite 加载动态创建的 Routine（合并到 config 来的列表）
@@ -247,7 +247,9 @@ impl RoutineEngine {
             let engine = Arc::clone(&engine);
             let name = name.clone();
             Box::pin(async move {
-                engine.trigger_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                engine
+                    .trigger_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 info!("Routine 触发: {}", name);
                 if let Err(e) = engine.execute_routine(&name).await {
                     error!("Routine 执行失败: {} - {}", name, e);
@@ -272,7 +274,10 @@ impl RoutineEngine {
             .add(job)
             .await
             .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
-        self.job_uuids.write().unwrap().insert(routine.name.to_string(), uuid);
+        self.job_uuids
+            .write()
+            .unwrap()
+            .insert(routine.name.to_string(), uuid);
 
         // 如果调度器尚未启动，立即启动（处理启动时无 routine，后续添加的情况）
         let should_start = {
@@ -294,7 +299,10 @@ impl RoutineEngine {
             info!("调度器已启动");
         }
 
-        info!("已调度 Routine: {} (schedule={})", routine.name, routine.schedule);
+        info!(
+            "已调度 Routine: {} (schedule={})",
+            routine.name, routine.schedule
+        );
         Ok(())
     }
 
@@ -314,7 +322,10 @@ impl RoutineEngine {
         }
 
         for routine in &enabled_routines {
-            info!("注册 Routine: {} (schedule={})", routine.name, routine.schedule);
+            info!(
+                "注册 Routine: {} (schedule={})",
+                routine.name, routine.schedule
+            );
             let job = Self::make_job(Arc::clone(&self), routine.name.clone(), &routine.schedule)
                 .map_err(|e| eyre!("创建 cron job 失败 ({}): {}", routine.name, e))?;
             let uuid = self
@@ -322,7 +333,10 @@ impl RoutineEngine {
                 .add(job)
                 .await
                 .map_err(|e| eyre!("添加 job 到调度器失败: {}", e))?;
-            self.job_uuids.write().unwrap().insert(routine.name.clone(), uuid);
+            self.job_uuids
+                .write()
+                .unwrap()
+                .insert(routine.name.clone(), uuid);
         }
 
         self.scheduler
@@ -333,7 +347,10 @@ impl RoutineEngine {
         // 标记调度器已启动
         *self.scheduler_started.lock().unwrap() = true;
 
-        info!("RoutineEngine 已启动，共 {} 个活跃任务", enabled_routines.len());
+        info!(
+            "RoutineEngine 已启动，共 {} 个活跃任务",
+            enabled_routines.len()
+        );
         Ok(())
     }
 
@@ -358,14 +375,17 @@ impl RoutineEngine {
         // 测试时可将 config.reliability.max_retries 设为 1 以跳过重试等待
         let max_retries = self.config.reliability.max_retries.max(1);
         const RETRY_DELAY_SECS: u64 = 300; // 5 分钟
-        const TIMEOUT_SECS: u64 = 300;     // 5 分钟超时
+        const TIMEOUT_SECS: u64 = 300; // 5 分钟超时
 
         let started_at = chrono::Utc::now().to_rfc3339();
         let mut last_error = String::new();
 
         for attempt in 0..max_retries {
             if attempt > 0 {
-                info!("Routine '{}' 第 {} 次重试，等待 {}s...", name, attempt, RETRY_DELAY_SECS);
+                info!(
+                    "Routine '{}' 第 {} 次重试，等待 {}s...",
+                    name, attempt, RETRY_DELAY_SECS
+                );
                 tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
             }
 
@@ -391,11 +411,21 @@ impl RoutineEngine {
                     return Ok(output);
                 }
                 Ok(Err(e)) => {
-                    warn!("Routine '{}' 执行出错（第 {} 次）: {}", name, attempt + 1, e);
+                    warn!(
+                        "Routine '{}' 执行出错（第 {} 次）: {}",
+                        name,
+                        attempt + 1,
+                        e
+                    );
                     last_error = e.to_string();
                 }
                 Err(_) => {
-                    warn!("Routine '{}' 执行超时（第 {} 次，限制 {}s）", name, attempt + 1, TIMEOUT_SECS);
+                    warn!(
+                        "Routine '{}' 执行超时（第 {} 次，限制 {}s）",
+                        name,
+                        attempt + 1,
+                        TIMEOUT_SECS
+                    );
                     last_error = format!("执行超时（超过 {} 秒）", TIMEOUT_SECS);
                 }
             }
@@ -403,7 +433,10 @@ impl RoutineEngine {
 
         // 全部重试失败
         let finished_at = chrono::Utc::now().to_rfc3339();
-        error!("Routine '{}' 全部 {} 次重试均失败，最后错误: {}", name, max_retries, last_error);
+        error!(
+            "Routine '{}' 全部 {} 次重试均失败，最后错误: {}",
+            name, max_retries, last_error
+        );
         self.log_execution(RoutineExecution {
             routine_name: name.to_string(),
             started_at,
@@ -413,7 +446,10 @@ impl RoutineEngine {
             error: Some(last_error.clone()),
         })
         .await;
-        let error_msg = format!("[Routine: {}] 执行失败（{} 次重试后）: {}", name, max_retries, last_error);
+        let error_msg = format!(
+            "[Routine: {}] 执行失败（{} 次重试后）: {}",
+            name, max_retries, last_error
+        );
         self.send_result(&routine, &error_msg).await;
         Err(eyre!("{}", error_msg))
     }
@@ -441,15 +477,18 @@ impl RoutineEngine {
 
         // Arc<dyn Provider> 用于 HttpRequestTool 的 mini-LLM 提取
         let raw_provider_for_arc = create_provider(provider_config);
-        let provider_arc: Arc<dyn crate::providers::Provider> =
-            Arc::new(ReliableProvider::new(raw_provider_for_arc, retry_config.clone()));
+        let provider_arc: Arc<dyn crate::providers::Provider> = Arc::new(ReliableProvider::new(
+            raw_provider_for_arc,
+            retry_config.clone(),
+        ));
 
         // Box<dyn Provider> 用于 Agent（从 Arc 克隆一份）
-        let provider: Box<dyn crate::providers::Provider> =
-            Box::new(ReliableProvider::new(create_provider(provider_config), retry_config));
+        let provider: Box<dyn crate::providers::Provider> = Box::new(ReliableProvider::new(
+            create_provider(provider_config),
+            retry_config,
+        ));
 
-        let base_dirs = directories::BaseDirs::new()
-            .ok_or_else(|| eyre!("无法获取 home 目录"))?;
+        let base_dirs = directories::BaseDirs::new().ok_or_else(|| eyre!("无法获取 home 目录"))?;
         let rrclaw_dir = base_dirs.home_dir().join(".rrclaw");
         let data_dir = rrclaw_dir.join("data");
         let log_dir = rrclaw_dir.join("logs");
@@ -473,7 +512,7 @@ impl RoutineEngine {
             config_path,
             vec![], // Routine 不加载 skills（保持执行简洁）
             Arc::clone(&self.memory),
-            None,   // Routine 内部 Agent 不注册 RoutineTool（避免循环调度）
+            None, // Routine 内部 Agent 不注册 RoutineTool（避免循环调度）
         );
 
         let provider_name = provider_key.clone();
@@ -482,10 +521,7 @@ impl RoutineEngine {
 
         // ★ Step 0: 从共享 Memory 召回上次成功的方法描述
         let memory_key = format!("routine:{}:approach", routine.name);
-        let recalled = self.memory
-            .recall(&memory_key, 1)
-            .await
-            .unwrap_or_default();
+        let recalled = self.memory.recall(&memory_key, 1).await.unwrap_or_default();
 
         // ★ Step 1: 构造增强版 message（有历史方法时注入前缀）
         let enhanced_message = build_enhanced_message(&recalled, &routine.message);
@@ -500,8 +536,8 @@ impl RoutineEngine {
             provider_config.base_url.clone(),
             model,
             temperature,
-            vec![],  // 无 skills
-            None,    // 无身份文件上下文（Routine 是系统任务，不需要用户偏好）
+            vec![], // 无 skills
+            None,   // 无身份文件上下文（Routine 是系统任务，不需要用户偏好）
         );
 
         // Routine 在 Full 模式下执行（不需要用户逐一确认，无交互界面）
@@ -515,7 +551,10 @@ impl RoutineEngine {
 
     /// 将执行结果路由到指定通道
     async fn send_result(&self, routine: &Routine, output: &str) {
-        let message = format!("[Routine: {}]\n{}\n─────────────────────────────────────────", routine.name, output);
+        let message = format!(
+            "[Routine: {}]\n{}\n─────────────────────────────────────────",
+            routine.name, output
+        );
         match routine.channel.as_str() {
             "cli" => {
                 // 优先通过 ExternalPrinter 打印：reedline 在 raw mode 下管理终端状态，
@@ -534,7 +573,10 @@ impl RoutineEngine {
                         warn!("Routine '{}' Telegram 发送失败: {}", routine.name, e);
                     }
                 } else {
-                    warn!("Routine '{}' 配置了 channel=telegram，但未找到 Telegram 配置", routine.name);
+                    warn!(
+                        "Routine '{}' 配置了 channel=telegram，但未找到 Telegram 配置",
+                        routine.name
+                    );
                     if let Some(tx) = self.cli_notifier.get() {
                         let _ = tx.send(message).await;
                     } else {
@@ -543,7 +585,10 @@ impl RoutineEngine {
                 }
             }
             other => {
-                warn!("Routine '{}' 使用了未知 channel: {}，降级为 cli", routine.name, other);
+                warn!(
+                    "Routine '{}' 使用了未知 channel: {}，降级为 cli",
+                    routine.name, other
+                );
                 if let Some(tx) = self.cli_notifier.get() {
                     let _ = tx.send(message).await;
                 } else {
@@ -572,10 +617,7 @@ impl RoutineEngine {
             .as_ref()
             .ok_or_else(|| eyre!("Telegram bot_token 未配置"))?;
 
-        let url = format!(
-            "https://api.telegram.org/bot{}/sendMessage",
-            bot_token
-        );
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -627,7 +669,12 @@ impl RoutineEngine {
 
     /// 查询单个 Routine（返回 clone）
     pub fn get_routine(&self, name: &str) -> Option<Routine> {
-        self.routines.read().unwrap().iter().find(|r| r.name == name).cloned()
+        self.routines
+            .read()
+            .unwrap()
+            .iter()
+            .find(|r| r.name == name)
+            .cloned()
     }
 
     /// 查询最近 N 条执行记录
@@ -661,7 +708,13 @@ impl RoutineEngine {
     /// 当前实现简化为：添加后提示用户重启 RRClaw 生效。
     pub async fn add_routine(&mut self, routine: Routine) -> Result<()> {
         // 检查名称是否重复
-        if self.routines.read().unwrap().iter().any(|r| r.name == routine.name) {
+        if self
+            .routines
+            .read()
+            .unwrap()
+            .iter()
+            .any(|r| r.name == routine.name)
+        {
             return Err(eyre!("Routine '{}' 已存在，请先删除再添加", routine.name));
         }
 
@@ -768,7 +821,13 @@ impl RoutineEngine {
     pub async fn persist_add_routine(self: Arc<Self>, routine: &Routine) -> Result<()> {
         // 重复检查（先持有 read lock，检查完立即释放）
         {
-            if self.routines.read().unwrap().iter().any(|r| r.name == routine.name) {
+            if self
+                .routines
+                .read()
+                .unwrap()
+                .iter()
+                .any(|r| r.name == routine.name)
+            {
                 return Err(eyre!("Routine '{}' 已存在，请先删除再添加", routine.name));
             }
         }
@@ -830,7 +889,10 @@ impl RoutineEngine {
         let maybe_uuid = self.job_uuids.write().unwrap().remove(name);
         if let Some(uuid) = maybe_uuid {
             if let Err(e) = self.scheduler.remove(&uuid).await {
-                warn!("移除调度器 job 失败（无害，已从内存删除）: {} - {:?}", name, e);
+                warn!(
+                    "移除调度器 job 失败（无害，已从内存删除）: {} - {:?}",
+                    name, e
+                );
             }
         }
         // 同步从内存移除
@@ -870,14 +932,16 @@ impl RoutineEngine {
             let maybe_uuid = self.job_uuids.write().unwrap().remove(name);
             if let Some(uuid) = maybe_uuid {
                 if let Err(e) = self.scheduler.remove(&uuid).await {
-                    warn!("移除调度器 job 失败（无害，内存已标记禁用）: {} - {:?}", name, e);
+                    warn!(
+                        "移除调度器 job 失败（无害，内存已标记禁用）: {} - {:?}",
+                        name, e
+                    );
                 }
             }
         }
         Ok(())
     }
 }
-
 
 // ─── 自然语言时间解析 ───────────────────────────────────────────────────────
 
@@ -892,10 +956,7 @@ pub(crate) fn build_enhanced_message(
     message: &str,
 ) -> String {
     if let Some(entry) = recalled.first() {
-        format!(
-            "[历史成功方法参考]\n{}\n\n---\n{}",
-            entry.content, message
-        )
+        format!("[历史成功方法参考]\n{}\n\n---\n{}", entry.content, message)
     } else {
         message.to_string()
     }
@@ -918,9 +979,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 1. 每天早上 X 点
     if let Ok(re) = Regex::new(r"每?天早上(\d{1,2})点?") {
         if let Some(caps) = re.captures(desc) {
-            let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的小时数")
-            })?;
+            let hour: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的小时数"))?;
             if hour < 24 {
                 return Ok(format!("0 {} * * *", hour));
             }
@@ -930,9 +994,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 2. 每天下午 X 点（下午1点=13点，下午12点=12点即中午）
     if let Ok(re) = Regex::new(r"每?天下午(\d{1,2})点?") {
         if let Some(caps) = re.captures(desc) {
-            let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的小时数")
-            })?;
+            let hour: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的小时数"))?;
             let hour_24 = if hour == 12 { 12u32 } else { hour + 12 };
             if hour_24 < 24 {
                 return Ok(format!("0 {} * * *", hour_24));
@@ -943,9 +1010,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 3. 每天晚上 X 点（晚上8点=20点，晚上12点=0点即午夜）
     if let Ok(re) = Regex::new(r"每?天晚上(\d{1,2})点?") {
         if let Some(caps) = re.captures(desc) {
-            let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的小时数")
-            })?;
+            let hour: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的小时数"))?;
             let hour_24 = if hour == 12 { 0u32 } else { hour + 12 };
             if hour_24 < 24 {
                 return Ok(format!("0 {} * * *", hour_24));
@@ -956,9 +1026,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 4. 每天 X 点（通用）
     if let Ok(re) = Regex::new(r"每?天(\d{1,2})点?") {
         if let Some(caps) = re.captures(desc) {
-            let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的小时数")
-            })?;
+            let hour: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的小时数"))?;
             if hour < 24 {
                 return Ok(format!("0 {} * * *", hour));
             }
@@ -973,9 +1046,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 5.1. 每 X 分钟
     if let Ok(re) = Regex::new(r"每(\d+)分钟") {
         if let Some(caps) = re.captures(desc) {
-            let minutes: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的分钟数")
-            })?;
+            let minutes: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的分钟数"))?;
             if minutes > 0 && minutes <= 59 {
                 // 每1分钟 = 每分钟，直接用 * * * * *
                 if minutes == 1 {
@@ -983,7 +1059,13 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
                 }
                 // 每N分钟（N>1）：生成显式的分钟列表
                 let mins: Vec<u32> = (0..60).step_by(minutes as usize).collect();
-                return Ok(format!("{} * * * *", mins.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",")));
+                return Ok(format!(
+                    "{} * * * *",
+                    mins.iter()
+                        .map(|m| m.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ));
             }
         }
     }
@@ -991,30 +1073,48 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 6. 每 X 小时
     if let Ok(re) = Regex::new(r"每(\d+)小时") {
         if let Some(caps) = re.captures(desc) {
-            let hours: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的小时数")
-            })?;
+            let hours: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的小时数"))?;
             if hours > 0 && hours <= 24 {
                 // 生成显式的小时列表
                 let hrs: Vec<u32> = (0..24).step_by(hours as usize).collect();
-                return Ok(format!("0 {} * * *", hrs.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",")));
+                return Ok(format!(
+                    "0 {} * * *",
+                    hrs.iter()
+                        .map(|h| h.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ));
             }
         }
     }
 
     // 7. 每周 X 早上/下午/晚上
     let week_patterns = [
-        ("周一", 1), ("周二", 2), ("周三", 3), ("周四", 4),
-        ("周五", 5), ("周六", 6), ("周日", 7), ("周末", 6),
+        ("周一", 1),
+        ("周二", 2),
+        ("周三", 3),
+        ("周四", 4),
+        ("周五", 5),
+        ("周六", 6),
+        ("周日", 7),
+        ("周末", 6),
     ];
     for (day_name, day_num) in week_patterns {
         // 每周X早上X点
         let pattern = format!(r"每{}早上(\d{{1,2}})点?", day_name);
         if let Ok(re) = Regex::new(&pattern) {
             if let Some(caps) = re.captures(desc) {
-                let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                    eyre!("无效的小时数")
-                })?;
+                let hour: u32 = caps
+                    .get(1)
+                    .unwrap()
+                    .as_str()
+                    .parse()
+                    .map_err(|_| eyre!("无效的小时数"))?;
                 if hour < 24 {
                     return Ok(format!("0 {} * * {}", hour, day_num));
                 }
@@ -1024,9 +1124,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
         let pattern = format!(r"每{}下午(\d{{1,2}})点?", day_name);
         if let Ok(re) = Regex::new(&pattern) {
             if let Some(caps) = re.captures(desc) {
-                let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                    eyre!("无效的小时数")
-                })?;
+                let hour: u32 = caps
+                    .get(1)
+                    .unwrap()
+                    .as_str()
+                    .parse()
+                    .map_err(|_| eyre!("无效的小时数"))?;
                 let hour_24 = if hour == 12 { 12u32 } else { hour + 12 };
                 if hour_24 < 24 {
                     return Ok(format!("0 {} * * {}", hour_24, day_num));
@@ -1037,9 +1140,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
         let pattern = format!(r"每{}(\d{{1,2}})点?", day_name);
         if let Ok(re) = Regex::new(&pattern) {
             if let Some(caps) = re.captures(desc) {
-                let hour: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                    eyre!("无效的小时数")
-                })?;
+                let hour: u32 = caps
+                    .get(1)
+                    .unwrap()
+                    .as_str()
+                    .parse()
+                    .map_err(|_| eyre!("无效的小时数"))?;
                 if hour < 24 {
                     return Ok(format!("0 {} * * {}", hour, day_num));
                 }
@@ -1050,9 +1156,12 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     // 5.2. 每 X 秒（cron 不支持秒，转换为每分钟）
     if let Ok(re) = Regex::new(r"每(\d+)秒") {
         if let Some(caps) = re.captures(desc) {
-            let seconds: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的秒数")
-            })?;
+            let seconds: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的秒数"))?;
             // cron 不支持秒，建议使用每分钟
             if seconds > 0 {
                 return Err(eyre!(
@@ -1064,11 +1173,15 @@ pub fn parse_schedule_to_cron(desc: &str) -> Result<String> {
     }
 
     // 8. 每月 X 号
-    if let Ok(re) = Regex::new(r"每月(\d{1,2})号?\s*(?:早上|上午|下午|晚上)?(\d{1,2})点?") {
+    if let Ok(re) = Regex::new(r"每月(\d{1,2})号?\s*(?:早上|上午|下午|晚上)?(\d{1,2})点?")
+    {
         if let Some(caps) = re.captures(desc) {
-            let day: u32 = caps.get(1).unwrap().as_str().parse().map_err(|_| {
-                eyre!("无效的日期")
-            })?;
+            let day: u32 = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| eyre!("无效的日期"))?;
             let hour = if let Some(h) = caps.get(2) {
                 h.as_str().parse().map_err(|_| eyre!("无效的小时数"))?
             } else {
@@ -1156,10 +1269,9 @@ mod tests {
 
     #[test]
     fn routine_default_values() {
-        let r: Routine = serde_json::from_str(
-            r#"{"name":"x","schedule":"0 * * * *","message":"test"}"#
-        )
-        .unwrap();
+        let r: Routine =
+            serde_json::from_str(r#"{"name":"x","schedule":"0 * * * *","message":"test"}"#)
+                .unwrap();
         assert_eq!(r.channel, "cli");
         assert!(r.enabled);
     }
@@ -1300,11 +1412,18 @@ mod tests {
 
     #[test]
     fn enhanced_message_with_recalled_entry_injects_prefix() {
-        let entry = make_memory_entry("GET https://api.example.com/price, headers: User-Agent: Mozilla");
+        let entry =
+            make_memory_entry("GET https://api.example.com/price, headers: User-Agent: Mozilla");
         let recalled = vec![entry];
         let msg = build_enhanced_message(&recalled, "查询股价");
-        assert!(msg.starts_with("[历史成功方法参考]"), "应以历史参考前缀开头");
-        assert!(msg.contains("GET https://api.example.com/price"), "应包含历史方法内容");
+        assert!(
+            msg.starts_with("[历史成功方法参考]"),
+            "应以历史参考前缀开头"
+        );
+        assert!(
+            msg.contains("GET https://api.example.com/price"),
+            "应包含历史方法内容"
+        );
         assert!(msg.contains("查询股价"), "应包含原始任务消息");
     }
 

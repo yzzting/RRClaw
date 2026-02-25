@@ -218,8 +218,8 @@ impl Default for SecurityConfig {
         Self {
             autonomy: AutonomyLevel::Supervised,
             allowed_commands: vec![
-                "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc",
-                "cargo", "rustc",
+                "ls", "cat", "grep", "find", "echo", "pwd", "git", "head", "tail", "wc", "cargo",
+                "rustc",
             ]
             .into_iter()
             .map(String::from)
@@ -348,11 +348,9 @@ impl Config {
 
         if !config_path.exists() {
             if let Some(parent) = config_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .wrap_err("创建配置目录失败")?;
+                std::fs::create_dir_all(parent).wrap_err("创建配置目录失败")?;
             }
-            std::fs::write(&config_path, DEFAULT_CONFIG_TOML)
-                .wrap_err("写入默认配置失败")?;
+            std::fs::write(&config_path, DEFAULT_CONFIG_TOML).wrap_err("写入默认配置失败")?;
         }
 
         Self::load_from_path(&config_path)
@@ -386,7 +384,10 @@ mod tests {
         assert_eq!(config.security.autonomy, AutonomyLevel::Supervised);
         assert!(config.security.workspace_only);
         assert!(config.security.allowed_commands.contains(&"ls".to_string()));
-        assert!(config.security.allowed_commands.contains(&"cargo".to_string()));
+        assert!(config
+            .security
+            .allowed_commands
+            .contains(&"cargo".to_string()));
     }
 
     #[test]
