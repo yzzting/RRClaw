@@ -96,49 +96,59 @@ impl TelegramRuntime {
             })?
         };
 
-        let telegram_config = config
-            .telegram
-            .clone()
-            .ok_or_else(|| eyre!("Telegram 未配置"))?;
-
         println!(
             "{}",
             t(lang, "正在启动 Telegram Bot...", "Starting Telegram Bot...")
         );
 
         // 启动 Telegram Bot
-        let handle = tokio::spawn(async move {
-            if let Err(e) = crate::channels::telegram::run_telegram(
-                crate::config::Config {
-                    telegram: Some(telegram_config),
-                    ..config
-                },
-                memory,
-            )
-            .await
+        #[cfg(not(feature = "telegram"))]
+        {
+            let _ = (memory, config);
+            return Err(color_eyre::eyre::eyre!(
+                "Telegram 功能未编译。请使用 --features telegram 重新构建。"
+            ));
+        }
+
+        #[cfg(feature = "telegram")]
+        {
+            let telegram_config = config
+                .telegram
+                .clone()
+                .ok_or_else(|| eyre!("Telegram 未配置"))?;
+            let handle = tokio::spawn(async move {
+                if let Err(e) = crate::channels::telegram::run_telegram(
+                    crate::config::Config {
+                        telegram: Some(telegram_config),
+                        ..config
+                    },
+                    memory,
+                )
+                .await
+                {
+                    tracing::error!("Telegram Bot 运行错误: {:#}", e);
+                }
+            });
+
+            // 保存句柄
             {
-                tracing::error!("Telegram Bot 运行错误: {:#}", e);
+                let mut h = self.handle.lock().unwrap();
+                *h = Some(handle);
             }
-        });
+            {
+                let mut r = self.running.lock().unwrap();
+                *r = true;
+            }
 
-        // 保存句柄
-        {
-            let mut h = self.handle.lock().unwrap();
-            *h = Some(handle);
+            let lang = crate::config::Config::get_language();
+            println!(
+                "{}✓{} {}",
+                ansi::GREEN,
+                ansi::RESET,
+                t(lang, "Telegram Bot 已启动", "Telegram Bot started")
+            );
+            Ok(())
         }
-        {
-            let mut r = self.running.lock().unwrap();
-            *r = true;
-        }
-
-        let lang = crate::config::Config::get_language();
-        println!(
-            "{}✓{} {}",
-            ansi::GREEN,
-            ansi::RESET,
-            t(lang, "Telegram Bot 已启动", "Telegram Bot started")
-        );
-        Ok(())
     }
 
     /// 停止 Telegram Bot
