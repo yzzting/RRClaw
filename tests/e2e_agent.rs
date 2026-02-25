@@ -123,7 +123,7 @@ async fn e2_3_readonly_policy_rejects_tool() {
 
     if let ConversationMessage::ToolResult { content, .. } = tool_result {
         assert!(
-            content.contains("只读") || content.contains("ReadOnly") || content.contains("拒绝"),
+            content.contains("Read-only") || content.contains("ReadOnly") || content.contains("not allowed"),
             "ToolResult 应包含拒绝原因，实际: {}",
             content
         );
@@ -161,7 +161,7 @@ async fn e2_4_command_whitelist_blocks_disallowed_command() {
 
     if let ConversationMessage::ToolResult { content, .. } = tool_result {
         assert!(
-            content.contains("白名单") || content.contains("不在"),
+            content.contains("allowlist") || content.contains("not in"),
             "ToolResult 应包含白名单拒绝原因，实际: {}",
             content
         );

@@ -29,29 +29,24 @@ impl SelfInfoTool {
 
     fn query_config(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("当前 Provider: {}", self.config.default.provider));
-        lines.push(format!("当前模型: {}", self.config.default.model));
+        lines.push(format!("Current Provider: {}", self.config.default.provider));
+        lines.push(format!("Current Model: {}", self.config.default.model));
         lines.push(format!("Temperature: {}", self.config.default.temperature));
         lines.push(format!(
-            "安全模式: {:?}",
+            "Security Mode: {:?}",
             self.config.security.autonomy
         ));
         lines.push(format!(
-            "命令白名单: [{}]",
+            "Command Allowlist: [{}]",
             self.config.security.allowed_commands.join(", ")
         ));
         lines.push(format!(
-            "工作目录限制: {}",
-            if self.config.security.workspace_only {
-                "是"
-            } else {
-                "否"
-            }
+            "Workspace-only: {}",
+            if self.config.security.workspace_only { "yes" } else { "no" }
         ));
 
-        // 列出已配置的 providers（API key 脱敏）
         lines.push(String::new());
-        lines.push("已配置的 Providers:".to_string());
+        lines.push("Configured Providers:".to_string());
         for (name, pc) in &self.config.providers {
             lines.push(format!(
                 "  - {}: model={}, base_url={}, api_key={}",
@@ -70,19 +65,13 @@ impl SelfInfoTool {
         let tantivy_path = self.data_dir.join("tantivy_index");
 
         let mut lines = Vec::new();
+        lines.push(format!("Config File: {}", self.config_path.display()));
+        lines.push(format!("Data Directory: {}", self.data_dir.display()));
+        lines.push(format!("SQLite Database: {}", db_path.display()));
+        lines.push(format!("tantivy Search Index: {}", tantivy_path.display()));
+        lines.push(format!("Log Directory: {}", self.log_dir.display()));
         lines.push(format!(
-            "配置文件: {}",
-            self.config_path.display()
-        ));
-        lines.push(format!("数据目录: {}", self.data_dir.display()));
-        lines.push(format!("SQLite 数据库: {}", db_path.display()));
-        lines.push(format!(
-            "tantivy 搜索索引: {}",
-            tantivy_path.display()
-        ));
-        lines.push(format!("日志目录: {}", self.log_dir.display()));
-        lines.push(format!(
-            "日志文件: {}/rrclaw.log.YYYY-MM-DD",
+            "Log File: {}/rrclaw.log.YYYY-MM-DD",
             self.log_dir.display()
         ));
         lines.join("\n")
@@ -91,38 +80,37 @@ impl SelfInfoTool {
     fn query_provider(&self) -> String {
         let provider_key = &self.config.default.provider;
         let mut lines = Vec::new();
-        lines.push(format!("当前 Provider: {}", provider_key));
-        lines.push(format!("当前模型: {}", self.config.default.model));
+        lines.push(format!("Current Provider: {}", provider_key));
+        lines.push(format!("Current Model: {}", self.config.default.model));
 
         if let Some(pc) = self.config.providers.get(provider_key) {
             lines.push(format!("Base URL: {}", pc.base_url));
             lines.push(format!(
-                "认证方式: {}",
+                "Auth Style: {}",
                 pc.auth_style.as_deref().unwrap_or("Bearer token")
             ));
         } else {
-            lines.push(format!("（Provider '{}' 未在配置中找到）", provider_key));
+            lines.push(format!("(Provider '{}' not found in config)", provider_key));
         }
 
         lines.join("\n")
     }
 
     fn query_stats(&self) -> String {
-        // 统计信息从文件系统读取
         let db_path = self.data_dir.join("memory.db");
         let db_exists = db_path.exists();
         let db_size = if db_exists {
             std::fs::metadata(&db_path)
                 .map(|m| format_bytes(m.len()))
-                .unwrap_or_else(|_| "未知".to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
         } else {
-            "数据库不存在".to_string()
+            "Database not found".to_string()
         };
 
         let mut lines = Vec::new();
-        lines.push(format!("数据库大小: {}", db_size));
+        lines.push(format!("Database Size: {}", db_size));
         lines.push(format!(
-            "已配置 Provider 数: {}",
+            "Configured Providers: {}",
             self.config.providers.len()
         ));
         lines.join("\n")
@@ -130,16 +118,16 @@ impl SelfInfoTool {
 
     fn query_help(&self) -> String {
         let lines = vec![
-            "可用斜杠命令:",
-            "  /help   — 显示帮助信息",
-            "  /new    — 开始新对话（清空当前历史）",
-            "  /clear  — 清空屏幕",
-            "  /switch — 切换 Provider/模型",
-            "  /apikey — 设置 API Key",
+            "Available slash commands:",
+            "  /help   — Show help information",
+            "  /new    — Start a new conversation (clears current history)",
+            "  /clear  — Clear the screen",
+            "  /switch — Switch provider/model",
+            "  /apikey — Set API key",
             "",
-            "其他操作:",
-            "  exit / quit / Ctrl-D — 退出",
-            "  Ctrl-C — 中断当前操作",
+            "Other operations:",
+            "  exit / quit / Ctrl-D — Exit",
+            "  Ctrl-C — Interrupt current operation",
         ];
         lines.join("\n")
     }
@@ -152,7 +140,7 @@ impl Tool for SelfInfoTool {
     }
 
     fn description(&self) -> &str {
-        "查询 RRClaw 自身信息（配置、路径、Provider、统计、帮助）。仅在需要了解自身状态时使用，不要每轮都调用。"
+        "Query RRClaw's own status (config, paths, provider, stats, help). Use only when you need to know the current state; do not call every turn."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -162,7 +150,7 @@ impl Tool for SelfInfoTool {
                 "query": {
                     "type": "string",
                     "enum": ["config", "paths", "provider", "stats", "help"],
-                    "description": "要查询的信息类型: config=配置总览, paths=文件路径, provider=当前Provider详情, stats=统计信息, help=可用命令"
+                    "description": "Information type: config=configuration overview, paths=file paths, provider=current provider details, stats=statistics, help=available commands"
                 }
             },
             "required": ["query"]
@@ -190,7 +178,7 @@ impl Tool for SelfInfoTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!(
-                        "未知查询类型: '{}'. 可选: config, paths, provider, stats, help",
+                        "Unknown query type: '{}'. Options: config, paths, provider, stats, help",
                         query
                     )),
                     ..Default::default()
@@ -353,7 +341,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("未知查询类型"));
+        assert!(result.error.unwrap().contains("Unknown query type"));
     }
 
     #[tokio::test]

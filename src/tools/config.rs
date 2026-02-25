@@ -17,10 +17,10 @@ impl Tool for ConfigTool {
     }
 
     fn description(&self) -> &str {
-        "读取或修改 RRClaw 配置。支持操作: \
-         get（读取配置项）、set（修改已有配置项）、list（列出所有配置）、\
-         append（追加新配置段，用于添加 MCP server 等新节）。\
-         修改会写入 ~/.rrclaw/config.toml，部分设置重启后生效。"
+        "Read or modify RRClaw configuration. Supported actions: \
+         get (read a config value), set (modify an existing value), list (show all config), \
+         append (add a new config section, e.g. MCP server). \
+         Changes are written to ~/.rrclaw/config.toml; some settings require a restart."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -30,15 +30,15 @@ impl Tool for ConfigTool {
                 "action": {
                     "type": "string",
                     "enum": ["get", "set", "list", "append"],
-                    "description": "操作类型: get 读取, set 修改已有项, list 列出全部, append 追加新配置段（如 MCP server）"
+                    "description": "Action: get=read a value, set=modify an existing key, list=show all config, append=add a new config section (e.g. MCP server)"
                 },
                 "key": {
                     "type": "string",
-                    "description": "配置项路径，用 . 分隔。如 'default.model', 'security.autonomy', 'providers.deepseek.model'"
+                    "description": "Config key path, dot-separated. e.g. 'default.model', 'security.autonomy', 'providers.deepseek.model'"
                 },
                 "value": {
                     "type": "string",
-                    "description": "set 操作时的新值；append 操作时为要追加的 TOML 文本（如 '[mcp.servers.xxx]\\ntransport = \"stdio\"\\n...'）"
+                    "description": "New value for set; TOML text to append for append (e.g. '[mcp.servers.xxx]\\ntransport = \"stdio\"\\n...')"
                 }
             },
             "required": ["action"]
@@ -51,7 +51,7 @@ impl Tool for ConfigTool {
                 if let Some(key) = args.get("key").and_then(|v| v.as_str()) {
                     if key == "security.autonomy" {
                         return Some(
-                            "不允许通过 AI 修改安全级别，请手动编辑配置文件".to_string(),
+                            "Changing the security level via AI is not allowed. Please edit the config file manually.".to_string(),
                         );
                     }
                 }
@@ -81,7 +81,7 @@ impl Tool for ConfigTool {
             _ => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("未知操作: {}", action)),
+                error: Some(format!("Unknown action: {}", action)),
                 ..Default::default()
             }),
         }
@@ -109,7 +109,7 @@ fn config_get(key: Option<&str>) -> Result<ToolResult> {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("缺少 key 参数".to_string()),
+                error: Some("Missing 'key' parameter".to_string()),
                 ..Default::default()
             });
         }
@@ -119,7 +119,7 @@ fn config_get(key: Option<&str>) -> Result<ToolResult> {
     let content = std::fs::read_to_string(&config_path)?;
     let doc = content
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| color_eyre::eyre::eyre!("解析配置文件失败: {}", e))?;
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to parse config file: {}", e))?;
 
     let parts: Vec<&str> = key.split('.').collect();
     let value = navigate_toml(&doc, &parts);
@@ -143,7 +143,7 @@ fn config_get(key: Option<&str>) -> Result<ToolResult> {
         None => Ok(ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("配置项 '{}' 不存在", key)),
+            error: Some(format!("Config key '{}' not found", key)),
             ..Default::default()
         }),
     }
@@ -157,7 +157,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("缺少 key 参数".to_string()),
+                error: Some("Missing 'key' parameter".to_string()),
                 ..Default::default()
             });
         }
@@ -168,7 +168,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("缺少 value 参数".to_string()),
+                error: Some("Missing 'value' parameter".to_string()),
                 ..Default::default()
             });
         }
@@ -178,14 +178,14 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
     let content = std::fs::read_to_string(&config_path)?;
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| color_eyre::eyre::eyre!("解析配置文件失败: {}", e))?;
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to parse config file: {}", e))?;
 
     let parts: Vec<&str> = key.split('.').collect();
     if !set_toml_value(&mut doc, &parts, value) {
         return Ok(ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("无法设置配置项 '{}'，路径不存在或不合法", key)),
+            error: Some(format!("Cannot set config key '{}': path does not exist or is invalid", key)),
             ..Default::default()
         });
     }
@@ -194,7 +194,7 @@ fn config_set(key: Option<&str>, value: Option<&str>) -> Result<ToolResult> {
 
     Ok(ToolResult {
         success: true,
-        output: format!("已将 {} 设置为 {}。部分设置重启后生效。", key, value),
+        output: format!("Set {} to {}. Some settings require a restart to take effect.", key, value),
         error: None,
         ..Default::default()
     })
@@ -208,7 +208,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("缺少 value 参数（要追加的 TOML 内容）".to_string()),
+                error: Some("Missing 'value' parameter (TOML content to append)".to_string()),
                 ..Default::default()
             });
         }
@@ -219,7 +219,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
         return Ok(ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("追加内容不是合法的 TOML: {}", e)),
+            error: Some(format!("Appended content is not valid TOML: {}", e)),
             ..Default::default()
         });
     }
@@ -242,7 +242,7 @@ fn config_append(value: Option<&str>) -> Result<ToolResult> {
 
     Ok(ToolResult {
         success: true,
-        output: "配置已追加，重启 RRClaw 后生效。".to_string(),
+        output: "Config appended. Restart RRClaw for changes to take effect.".to_string(),
         error: None,
         ..Default::default()
     })

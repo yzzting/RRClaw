@@ -30,7 +30,7 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        "加载技能的详细指令。当你判断某个技能适用于当前任务时，调用此工具获取完整操作指南。"
+        "Load detailed skill instructions. Call this when you determine a skill is applicable to the current task."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -39,7 +39,7 @@ impl Tool for SkillTool {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "要加载的技能名称（用 self_info query=help 可查看可用技能列表）"
+                    "description": "Name of the skill to load (use self_info query=help to see available skills)"
                 }
             },
             "required": ["name"]
@@ -57,7 +57,7 @@ impl Tool for SkillTool {
                 return Ok(ToolResult {
                     success: false,
                     output: String::new(),
-                    error: Some("缺少 name 参数".to_string()),
+                    error: Some("Missing 'name' parameter".to_string()),
                     ..Default::default()
                 });
             }

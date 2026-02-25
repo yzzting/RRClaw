@@ -19,7 +19,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "执行 shell 命令。Supervised 模式下用户确认后可执行任意命令，Full 模式下须在白名单中。"
+        "Execute a shell command. In Supervised mode any command is allowed after user confirmation; in Full mode the command must be on the allowlist."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -28,7 +28,7 @@ impl Tool for ShellTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "要执行的 shell 命令"
+                    "description": "Shell command to execute"
                 }
             },
             "required": ["command"]
@@ -38,14 +38,14 @@ impl Tool for ShellTool {
     fn pre_validate(&self, args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
         // ReadOnly 模式: 绝对拒绝
         if !policy.allows_execution() {
-            return Some("当前为只读模式，不允许执行命令".to_string());
+            return Some("Read-only mode: command execution not allowed".to_string());
         }
         // Full 模式: 白名单是唯一防线（无人工确认）
         // Supervised 模式: 不在此拦截，由用户确认决定
         if !policy.requires_confirmation() {
             if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
                 if !policy.is_command_allowed(command) {
-                    return Some(format!("命令不在白名单中: {}", command));
+                    return Some(format!("Command not in allowlist: {}", command));
                 }
             }
         }
@@ -60,14 +60,14 @@ impl Tool for ShellTool {
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("缺少 command 参数"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Missing 'command' parameter"))?;
 
         // ReadOnly 模式: 绝对拒绝
         if !policy.allows_execution() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("当前为只读模式，不允许执行命令".to_string()),
+                error: Some("Read-only mode: command execution not allowed".to_string()),
                 ..Default::default()
             });
         }
@@ -78,7 +78,7 @@ impl Tool for ShellTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("命令不在白名单中: {}", command)),
+                error: Some(format!("Command not in allowlist: {}", command)),
                 ..Default::default()
             });
         }
@@ -119,7 +119,7 @@ impl Tool for ShellTool {
                         success: false,
                         output: stdout,
                         error: Some(format!(
-                            "命令退出码: {}\n{}",
+                            "Command exited with code: {}\n{}",
                             output.status.code().unwrap_or(-1),
                             stderr
                         )),
@@ -131,7 +131,7 @@ impl Tool for ShellTool {
             Err(_) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("命令执行超时 ({}s)", SHELL_TIMEOUT.as_secs())),
+                error: Some(format!("Command timed out ({}s)", SHELL_TIMEOUT.as_secs())),
                 ..Default::default()
             }),
         }
@@ -183,7 +183,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("白名单"));
+        assert!(result.error.unwrap().contains("allowlist"));
     }
 
     #[tokio::test]
@@ -198,7 +198,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("只读"));
+        assert!(result.error.unwrap().contains("Read-only"));
     }
 
     #[tokio::test]

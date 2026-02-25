@@ -16,7 +16,7 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        "读取文件内容。路径必须在 workspace 范围内。"
+        "Read file contents. Path must be within the workspace directory."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -25,7 +25,7 @@ impl Tool for FileReadTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "要读取的文件路径"
+                    "description": "Path to the file to read"
                 }
             },
             "required": ["path"]
@@ -40,7 +40,7 @@ impl Tool for FileReadTool {
         let path_str = args
             .get("path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("缺少 path 参数"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Missing 'path' parameter"))?;
 
         let path = resolve_path(path_str, policy);
 
@@ -49,7 +49,7 @@ impl Tool for FileReadTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("路径不在允许范围内: {}", path.display())),
+                error: Some(format!("Path not within allowed workspace: {}", path.display())),
                 ..Default::default()
             });
         }
@@ -64,7 +64,7 @@ impl Tool for FileReadTool {
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("读取文件失败: {}", e)),
+                error: Some(format!("Failed to read file: {}", e)),
                 ..Default::default()
             }),
         }
@@ -81,7 +81,7 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "写入文件内容。路径必须在 workspace 范围内。"
+        "Write content to a file. Path must be within the workspace directory."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -90,11 +90,11 @@ impl Tool for FileWriteTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "要写入的文件路径"
+                    "description": "Path to the file to write"
                 },
                 "content": {
                     "type": "string",
-                    "description": "要写入的内容"
+                    "description": "Content to write to the file"
                 }
             },
             "required": ["path", "content"]
@@ -103,7 +103,7 @@ impl Tool for FileWriteTool {
 
     fn pre_validate(&self, _args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
         if !policy.allows_execution() {
-            return Some("当前为只读模式，不允许写入文件".to_string());
+            return Some("Read-only mode: file writing not allowed".to_string());
         }
         None
     }
@@ -116,19 +116,19 @@ impl Tool for FileWriteTool {
         let path_str = args
             .get("path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("缺少 path 参数"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Missing 'path' parameter"))?;
 
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("缺少 content 参数"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Missing 'content' parameter"))?;
 
         // 安全检查: ReadOnly 模式拒绝（防御性二次检查）
         if !policy.allows_execution() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("当前为只读模式，不允许写入文件".to_string()),
+                error: Some("Read-only mode: file writing not allowed".to_string()),
                 ..Default::default()
             });
         }
@@ -140,7 +140,7 @@ impl Tool for FileWriteTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("路径不在允许范围内: {}", path.display())),
+                error: Some(format!("Path not within allowed workspace: {}", path.display())),
                 ..Default::default()
             });
         }
@@ -157,14 +157,14 @@ impl Tool for FileWriteTool {
         match tokio::fs::write(&path, content).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("已写入 {} 字节到 {}", content.len(), path.display()),
+                output: format!("Wrote {} bytes to {}", content.len(), path.display()),
                 error: None,
                 ..Default::default()
             }),
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("写入文件失败: {}", e)),
+                error: Some(format!("Failed to write file: {}", e)),
                 ..Default::default()
             }),
         }
@@ -244,7 +244,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("允许范围"));
+        assert!(result.error.unwrap().contains("allowed"));
     }
 
     #[tokio::test]
@@ -258,7 +258,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("读取文件失败"));
+        assert!(result.error.unwrap().contains("Failed to read"));
     }
 
     #[tokio::test]
@@ -312,7 +312,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("只读"));
+        assert!(result.error.unwrap().contains("Read-only"));
     }
 
     #[tokio::test]
@@ -329,7 +329,7 @@ mod tests {
             .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("允许范围"));
+        assert!(result.error.unwrap().contains("allowed"));
     }
 
     #[test]

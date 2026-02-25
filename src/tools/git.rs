@@ -15,8 +15,8 @@ impl Tool for GitTool {
     }
 
     fn description(&self) -> &str {
-        "Git 版本控制（推荐，有安全保护）。支持 action: status, diff, log, add, commit, branch, checkout, push, pull, fetch。\
-         比 shell 工具更安全：强制 push/checkout 会被拦截，action 白名单保护。"
+        "Git version control (preferred; has safety guardrails). Supports action: status, diff, log, add, commit, branch, checkout, push, pull, fetch. \
+         Safer than the shell tool: force push/checkout is blocked, action allowlist enforced."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -26,11 +26,11 @@ impl Tool for GitTool {
                 "action": {
                     "type": "string",
                     "enum": ["status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch"],
-                    "description": "Git 操作类型"
+                    "description": "Git operation type"
                 },
                 "args": {
                     "type": "string",
-                    "description": "操作参数。如: diff 的文件路径, commit 的 -m \"message\", add 的文件列表(空格分隔), branch 的分支名, checkout 的目标分支, log 的 --oneline -10, push/pull 的 origin main 等。可留空使用默认行为。"
+                    "description": "Operation arguments. Examples: file path for diff, -m \"message\" for commit, space-separated files for add, branch name for branch/checkout, --oneline -10 for log, origin main for push/pull. Leave empty for default behavior."
                 }
             },
             "required": ["action"]
@@ -40,7 +40,7 @@ impl Tool for GitTool {
     fn pre_validate(&self, args: &serde_json::Value, policy: &SecurityPolicy) -> Option<String> {
         // ReadOnly 模式拒绝所有 git 操作
         if !policy.allows_execution() {
-            return Some("只读模式下不允许 Git 操作".to_string());
+            return Some("Read-only mode: Git operations not allowed".to_string());
         }
 
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
@@ -48,12 +48,12 @@ impl Tool for GitTool {
 
         // 禁止 force push
         if action == "push" && (extra.contains("--force") || extra.contains("-f")) {
-            return Some("禁止 force push。如需强推请手动执行。".to_string());
+            return Some("Force push is blocked. Please run manually if needed.".to_string());
         }
 
         // 禁止 checkout --force / checkout -f（可能丢失未提交改动）
         if action == "checkout" && (extra.contains("--force") || extra.contains("-f")) {
-            return Some("禁止 force checkout。如需强制切换请手动执行。".to_string());
+            return Some("Force checkout is blocked. Please run manually if needed.".to_string());
         }
 
         None
@@ -67,7 +67,7 @@ impl Tool for GitTool {
         let action = args
             .get("action")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| eyre!("缺少 action 参数"))?;
+            .ok_or_else(|| eyre!("Missing 'action' parameter"))?;
 
         let extra = args
             .get("args")
@@ -111,7 +111,7 @@ impl Tool for GitTool {
                         success: false,
                         output: stdout,
                         error: Some(if stderr.is_empty() {
-                            format!("git 退出码: {}", output.status.code().unwrap_or(-1))
+                            format!("git exited with code: {}", output.status.code().unwrap_or(-1))
                         } else {
                             stderr
                         }),
@@ -122,7 +122,7 @@ impl Tool for GitTool {
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("执行 git 命令失败: {}", e)),
+                error: Some(format!("Failed to execute git command: {}", e)),
                 ..Default::default()
             }),
         }
@@ -134,7 +134,7 @@ fn build_git_args(action: &str, extra: &str) -> Result<Vec<String>> {
     // 验证 action 合法性
     let valid_actions = ["status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "fetch"];
     if !valid_actions.contains(&action) {
-        return Err(eyre!("未知 git action: '{}'。支持: {}", action, valid_actions.join(", ")));
+        return Err(eyre!("Unknown git action: '{}'. Supported: {}", action, valid_actions.join(", ")));
     }
 
     let mut args = vec![action.to_string()];
@@ -142,7 +142,7 @@ fn build_git_args(action: &str, extra: &str) -> Result<Vec<String>> {
     // 追加额外参数（安全拆分，处理引号）
     if !extra.is_empty() {
         let extra_args = shell_words::split(extra)
-            .map_err(|e| eyre!("参数解析失败: {}。请检查引号是否匹配。", e))?;
+            .map_err(|e| eyre!("Failed to parse arguments: {}. Please check that quotes are balanced.", e))?;
         args.extend(extra_args);
     }
 
@@ -196,7 +196,7 @@ mod tests {
     fn build_args_unknown_action() {
         let result = build_git_args("rebase", "-i HEAD~3");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("未知 git action"));
+        assert!(result.unwrap_err().to_string().contains("Unknown git action"));
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
         let args = serde_json::json!({"action": "push", "args": "--force origin main"});
         let result = GitTool.pre_validate(&args, &policy);
         assert!(result.is_some());
-        assert!(result.unwrap().contains("force push"));
+        assert!(result.unwrap().contains("Force push"));
     }
 
     #[test]
