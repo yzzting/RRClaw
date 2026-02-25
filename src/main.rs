@@ -27,7 +27,8 @@ enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
-    /// 启动 Telegram Bot
+    /// 启动 Telegram Bot（需要 --features telegram 编译）
+    #[cfg(feature = "telegram")]
     Telegram,
     /// 交互式配置向导
     Setup,
@@ -50,6 +51,7 @@ async fn main() -> Result<()> {
             provider,
             model,
         } => run_agent(message, provider, model).await?,
+        #[cfg(feature = "telegram")]
         Commands::Telegram => run_telegram().await?,
         Commands::Setup => rrclaw::config::run_setup()?,
         Commands::Init => run_init()?,
@@ -273,47 +275,63 @@ async fn run_agent(
         identity_context,
     );
 
-    // 检查是否配置了 Telegram
-    let telegram_config = config.telegram.clone();
-
     // 创建 Telegram 运行时管理器
     let telegram_runtime = Arc::new(rrclaw::channels::cli::TelegramRuntime::new());
-    if let Some(ref tg_cfg) = telegram_config {
-        telegram_runtime.set_config(rrclaw::config::Config {
-            telegram: Some(tg_cfg.clone()),
-            ..config.clone()
-        });
-    }
+    #[cfg(feature = "telegram")]
+    let telegram_config = {
+        let cfg = config.telegram.clone();
+        if let Some(ref tg_cfg) = cfg {
+            telegram_runtime.set_config(rrclaw::config::Config {
+                telegram: Some(tg_cfg.clone()),
+                ..config.clone()
+            });
+        }
+        cfg
+    };
 
     // 运行
     match message {
         Some(msg) => rrclaw::channels::cli::run_single(&mut agent, &msg, &memory).await?,
         None => {
-            if telegram_config.is_some() {
-                // 同时启动 CLI 和 Telegram
-                run_cli_with_telegram(
-                    &mut agent,
-                    &memory,
-                    &config,
-                    skills,
-                    rrclaw_home,
-                    routine_engine,
-                    telegram_runtime,
-                )
-                .await?;
-            } else {
-                // 只启动 CLI
-                rrclaw::channels::cli::run_repl(
-                    &mut agent,
-                    &memory,
-                    &config,
-                    skills,
-                    &rrclaw_home,
-                    routine_engine,
-                    Some(telegram_runtime),
-                )
-                .await?;
+            #[cfg(feature = "telegram")]
+            {
+                if telegram_config.is_some() {
+                    // 同时启动 CLI 和 Telegram
+                    run_cli_with_telegram(
+                        &mut agent,
+                        &memory,
+                        &config,
+                        skills,
+                        rrclaw_home,
+                        routine_engine,
+                        telegram_runtime,
+                    )
+                    .await?;
+                } else {
+                    // 只启动 CLI
+                    rrclaw::channels::cli::run_repl(
+                        &mut agent,
+                        &memory,
+                        &config,
+                        skills,
+                        &rrclaw_home,
+                        routine_engine,
+                        Some(telegram_runtime),
+                    )
+                    .await?;
+                }
             }
+            #[cfg(not(feature = "telegram"))]
+            rrclaw::channels::cli::run_repl(
+                &mut agent,
+                &memory,
+                &config,
+                skills,
+                &rrclaw_home,
+                routine_engine,
+                Some(telegram_runtime),
+            )
+            .await?;
         }
     }
 
@@ -326,6 +344,7 @@ async fn run_agent(
 }
 
 /// 同时运行 CLI REPL 和 Telegram Bot
+#[cfg(feature = "telegram")]
 #[allow(clippy::too_many_arguments)]
 async fn run_cli_with_telegram(
     agent: &mut rrclaw::agent::Agent,
@@ -384,6 +403,7 @@ async fn run_cli_with_telegram(
     cli_result
 }
 
+#[cfg(feature = "telegram")]
 async fn run_telegram() -> Result<()> {
     let config = rrclaw::config::Config::load_or_init().wrap_err("加载配置失败")?;
 
