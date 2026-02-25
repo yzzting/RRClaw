@@ -21,7 +21,17 @@ class Rrclaw < Formula
   end
 
   def install
-    bin.install "rrclaw"
+    on_macos do
+      on_arm do
+        bin.install "rrclaw-macos-aarch64" => "rrclaw"
+      end
+      on_intel do
+        bin.install "rrclaw-macos-x86_64" => "rrclaw"
+      end
+    end
+    on_linux do
+      bin.install "rrclaw-linux-x86_64" => "rrclaw"
+    end
   end
 
   test do
