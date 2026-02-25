@@ -40,9 +40,9 @@ jobs:
 
         # Update version and URLs/SHA256s in formula
         sed -i "s|version \".*\"|version \"${VERSION}\"|g" Formula/rrclaw.rb
-        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-macos-aarch64\.tar\.gz|${BASE}/rrclaw-macos-aarch64.tar.gz|g" Formula/rrclaw.rb
-        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-macos-x86_64\.tar\.gz|${BASE}/rrclaw-macos-x86_64.tar.gz|g" Formula/rrclaw.rb
-        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-linux-x86_64\.tar\.gz|${BASE}/rrclaw-linux-x86_64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yzzting/rrclaw/releases/download/.*/rrclaw-macos-aarch64\.tar\.gz|${BASE}/rrclaw-macos-aarch64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yzzting/rrclaw/releases/download/.*/rrclaw-macos-x86_64\.tar\.gz|${BASE}/rrclaw-macos-x86_64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yzzting/rrclaw/releases/download/.*/rrclaw-linux-x86_64\.tar\.gz|${BASE}/rrclaw-linux-x86_64.tar.gz|g" Formula/rrclaw.rb
         sed -i "/rrclaw-macos-aarch64/{n; s|sha256 \".*\"|sha256 \"${MACOS_ARM64_SHA256}\"|g}" Formula/rrclaw.rb
         sed -i "/rrclaw-macos-x86_64/{n; s|sha256 \".*\"|sha256 \"${MACOS_X86_64_SHA256}\"|g}" Formula/rrclaw.rb
         sed -i "/rrclaw-linux-x86_64/{n; s|sha256 \".*\"|sha256 \"${LINUX_X86_64_SHA256}\"|g}" Formula/rrclaw.rb
