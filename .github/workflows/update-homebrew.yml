@@ -35,7 +35,7 @@ jobs:
         VERSION="${TAG#v}"
         BASE="https://github.com/${{ github.repository }}/releases/download/${TAG}"
 
-        git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/yangzizi/homebrew-rrclaw.git tap-repo
+        git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/yzzting/homebrew-rrclaw.git tap-repo
         cd tap-repo
 
         # Update version and URLs/SHA256s in formula
