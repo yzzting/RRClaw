@@ -44,8 +44,14 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
+    - name: Check without telegram feature (default)
+      run: cargo check
+
+    - name: Check with telegram feature
+      run: cargo check --features telegram
+
     - name: Build release
-      run: cargo build --release
+      run: cargo build --release --features telegram
 
   cross-build:
     name: Cross Build (${{ matrix.target }})
