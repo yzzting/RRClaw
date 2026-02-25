@@ -731,7 +731,7 @@ fn find_test_missing_params(schema: &serde_json::Value, args: &serde_json::Value
         for field in required {
             if let Some(field_name) = field.as_str() {
                 // 检查 args 中是否存在此字段
-                if !args.get(field_name).is_some() {
+                if args.get(field_name).is_none() {
                     missing.push(field_name.to_string());
                 }
             }

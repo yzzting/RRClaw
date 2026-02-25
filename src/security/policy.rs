@@ -262,9 +262,10 @@ mod tests {
 
     #[test]
     fn autonomy_levels() {
-        let mut policy = SecurityPolicy::default();
-
-        policy.autonomy = AutonomyLevel::ReadOnly;
+        let mut policy = SecurityPolicy {
+            autonomy: AutonomyLevel::ReadOnly,
+            ..Default::default()
+        };
         assert!(!policy.allows_execution());
         assert!(!policy.requires_confirmation());
 

@@ -280,7 +280,7 @@ impl Config {
     pub fn get_http_allowed_hosts() -> Vec<String> {
         #[cfg(test)]
         {
-            return vec![];
+            vec![]
         }
         #[cfg(not(test))]
         {
@@ -317,7 +317,7 @@ impl Config {
     pub fn get_language() -> crate::i18n::Language {
         #[cfg(test)]
         {
-            return crate::i18n::Language::English;
+            crate::i18n::Language::English
         }
         #[cfg(not(test))]
         {
