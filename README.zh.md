@@ -52,25 +52,53 @@
 
 ---
 
-## 快速开始
+## 安装
 
-### 依赖
-
-- Rust 1.75+
-- 至少一个支持的 AI 模型 API Key
-
-### 构建
+### 方式一 — Homebrew（macOS / Linux，推荐）
 
 ```bash
-git clone https://github.com/your-org/rrclaw.git
+brew tap yzzting/rrclaw
+brew install rrclaw
+```
+
+### 方式二 — cargo install（需要 Rust 环境）
+
+```bash
+# 核心 CLI（不含 Telegram）
+cargo install rrclaw
+
+# 含 Telegram Bot 支持
+cargo install rrclaw --features telegram
+```
+
+### 方式三 — 下载预编译二进制
+
+从 [GitHub Releases](https://github.com/yzzting/rrclaw/releases) 下载对应平台的压缩包，解压后放入 `PATH`：
+
+```bash
+# macOS Apple Silicon 示例
+curl -L https://github.com/yzzting/rrclaw/releases/latest/download/rrclaw-macos-aarch64.tar.gz | tar xz
+sudo mv rrclaw /usr/local/bin/
+```
+
+### 方式四 — 从源码构建
+
+```bash
+# 需要 Rust 1.75+
+git clone https://github.com/yzzting/rrclaw.git
 cd rrclaw
 cargo build --release
+# 二进制在: ./target/release/rrclaw
 ```
+
+---
+
+## 快速开始
 
 ### 初次运行
 
 ```bash
-./target/release/rrclaw setup
+rrclaw setup
 ```
 
 交互式向导引导完成 provider 选择和 API Key 配置。配置文件保存在 `~/.rrclaw/config.toml`。

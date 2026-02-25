@@ -52,25 +52,53 @@
 
 ---
 
-## Quick Start
+## Installation
 
-### Prerequisites
-
-- Rust 1.75+
-- An API key for at least one supported provider
-
-### Build
+### Option 1 — Homebrew (macOS / Linux, recommended)
 
 ```bash
-git clone https://github.com/your-org/rrclaw.git
+brew tap yzzting/rrclaw
+brew install rrclaw
+```
+
+### Option 2 — cargo install (requires Rust)
+
+```bash
+# Core CLI only
+cargo install rrclaw
+
+# With Telegram Bot support
+cargo install rrclaw --features telegram
+```
+
+### Option 3 — Download prebuilt binary
+
+Download from [GitHub Releases](https://github.com/yzzting/rrclaw/releases), extract, and move to your `PATH`:
+
+```bash
+# macOS Apple Silicon example
+curl -L https://github.com/yzzting/rrclaw/releases/latest/download/rrclaw-macos-aarch64.tar.gz | tar xz
+sudo mv rrclaw /usr/local/bin/
+```
+
+### Option 4 — Build from source
+
+```bash
+# Requires Rust 1.75+
+git clone https://github.com/yzzting/rrclaw.git
 cd rrclaw
 cargo build --release
+# Binary at: ./target/release/rrclaw
 ```
+
+---
+
+## Quick Start
 
 ### First Run
 
 ```bash
-./target/release/rrclaw setup
+rrclaw setup
 ```
 
 The setup wizard will guide you through provider selection and API key configuration. Config is stored at `~/.rrclaw/config.toml`.
