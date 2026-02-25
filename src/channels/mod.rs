@@ -1,4 +1,5 @@
 pub mod cli;
+#[cfg(feature = "telegram")]
 pub mod telegram;
 pub mod unified;
 
