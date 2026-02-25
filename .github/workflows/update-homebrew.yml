@@ -1,0 +1,54 @@
+name: Update Homebrew
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-homebrew:
+    name: Update homebrew-rrclaw formula
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download macOS arm64 binary
+      run: |
+        curl -L -o macos-arm64.tar.gz \
+          "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rrclaw-macos-aarch64.tar.gz"
+        echo "MACOS_ARM64_SHA256=$(sha256sum macos-arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+    - name: Download macOS x86_64 binary
+      run: |
+        curl -L -o macos-x86_64.tar.gz \
+          "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rrclaw-macos-x86_64.tar.gz"
+        echo "MACOS_X86_64_SHA256=$(sha256sum macos-x86_64.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+    - name: Download Linux x86_64 binary
+      run: |
+        curl -L -o linux-x86_64.tar.gz \
+          "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rrclaw-linux-x86_64.tar.gz"
+        echo "LINUX_X86_64_SHA256=$(sha256sum linux-x86_64.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+    - name: Update Formula and push to homebrew-rrclaw
+      run: |
+        TAG="${{ github.ref_name }}"
+        VERSION="${TAG#v}"
+        BASE="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+
+        git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/yangzizi/homebrew-rrclaw.git tap-repo
+        cd tap-repo
+
+        # Update version and URLs/SHA256s in formula
+        sed -i "s|version \".*\"|version \"${VERSION}\"|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-macos-aarch64\.tar\.gz|${BASE}/rrclaw-macos-aarch64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-macos-x86_64\.tar\.gz|${BASE}/rrclaw-macos-x86_64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "s|https://github.com/yangzizi/rrclaw/releases/download/.*/rrclaw-linux-x86_64\.tar\.gz|${BASE}/rrclaw-linux-x86_64.tar.gz|g" Formula/rrclaw.rb
+        sed -i "/rrclaw-macos-aarch64/{n; s|sha256 \".*\"|sha256 \"${MACOS_ARM64_SHA256}\"|g}" Formula/rrclaw.rb
+        sed -i "/rrclaw-macos-x86_64/{n; s|sha256 \".*\"|sha256 \"${MACOS_X86_64_SHA256}\"|g}" Formula/rrclaw.rb
+        sed -i "/rrclaw-linux-x86_64/{n; s|sha256 \".*\"|sha256 \"${LINUX_X86_64_SHA256}\"|g}" Formula/rrclaw.rb
+
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+        git add Formula/rrclaw.rb
+        git diff --cached --quiet || git commit -m "chore: bump rrclaw to ${VERSION}"
+        git push
