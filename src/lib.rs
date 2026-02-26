@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod channels;
 pub mod config;
+pub mod daemon;
 pub mod i18n;
 pub mod mcp;
 pub mod memory;
