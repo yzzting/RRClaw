@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "rrclaw"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2769,6 +2769,7 @@ dependencies = [
  "figment",
  "futures-util",
  "html2text",
+ "libc",
  "reedline",
  "regex",
  "reqwest 0.13.2",

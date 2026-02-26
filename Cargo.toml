@@ -1,6 +1,6 @@
 [package]
 name = "rrclaw"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "安全优先的 AI 助手基础设施，100% Rust，Trait 可插拔架构"
 license = "MIT"
