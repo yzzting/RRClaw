@@ -408,7 +408,9 @@ async fn d5_3_confirm_rejected_roundtrip() {
 #[test]
 fn d1_path_helpers_correct_suffix() {
     assert!(rrclaw::daemon::pid_path().unwrap().ends_with("daemon.pid"));
-    assert!(rrclaw::daemon::sock_path().unwrap().ends_with("daemon.sock"));
+    assert!(rrclaw::daemon::sock_path()
+        .unwrap()
+        .ends_with("daemon.sock"));
 }
 
 /// D1 (unit): sock_path does not exist → run_chat returns early (no panic).
