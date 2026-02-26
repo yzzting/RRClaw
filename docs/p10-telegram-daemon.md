@@ -175,6 +175,64 @@ rrclaw stop
 # → stopped
 ```
 
+## 测试用例
+
+### D1 Daemon 生命周期
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D1-1 | `start` → `status` | status 显示 running + pid |
+| D1-2 | `start` 后再次 `start` | 报 "already running"，不重复启动 |
+| D1-3 | `stop` → `status` | status 显示 not running |
+| D1-4 | `stop` 后再次 `stop` | 报 "not running"，不报错 |
+| D1-5 | `restart` | 先 stop 后 start，pid 变化，服务恢复 |
+| D1-6 | `start` 后 kill -9 daemon 进程 | `daemon.pid` 和 `daemon.sock` 为 stale；下次 `start` 能正常启动 |
+| D1-7 | `status` 无 daemon | 输出 "not running" |
+
+### D2 IPC 通信
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D2-1 | `chat` 连接，发消息，收回复 | 完整收到 token 流 + done |
+| D2-2 | `chat` 断开后重新连接 | 新 session，历史清空，daemon 继续运行 |
+| D2-3 | 两个 `chat` 同时连接 | 各自独立会话，互不干扰 |
+| D2-4 | `chat` 时 daemon 崩溃 | client 收到连接断开错误，提示重启 daemon |
+| D2-5 | `chat` 在 daemon 未启动时运行 | 提示 "daemon not running, run `rrclaw start` first" |
+
+### D3 Channel 隔离
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D3-1 | CLI session A 发消息，session B 查历史 | B 看不到 A 的对话历史 |
+| D3-2 | TG chat_id 1 发消息，chat_id 2 查历史 | 各自独立，互不可见 |
+| D3-3 | CLI 和 TG 同时发消息 | 各自独立处理，不互相阻塞 |
+
+### D4 Memory 共享
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D4-1 | CLI 对话中 Agent 存入记忆 → TG 侧 recall | TG 能查到 CLI 存入的记忆 |
+| D4-2 | TG 存入记忆 → 重启 daemon → CLI recall | 重启后记忆仍在（SQLite 持久化） |
+
+### D5 Supervised 模式工具确认
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D5-1 | CLI chat 中触发工具调用 | confirm 请求通过 IPC 推送到 CLI 客户端，等待用户 y/n |
+| D5-2 | 用户输入 `y` | 工具执行，结果返回 |
+| D5-3 | 用户输入 `n` | 工具取消，Agent 收到拒绝结果 |
+| D5-4 | CLI 断开时有 pending confirm | daemon 自动取消该 confirm，不死锁 |
+
+### D6 Telegram 持久性
+
+| ID | 场景 | 预期 |
+|----|------|------|
+| D6-1 | `start` 后关闭终端 | TG Bot 继续响应消息 |
+| D6-2 | 关闭终端再 `rrclaw chat` | 能重新连接，TG 侧无感知 |
+| D6-3 | 无 `[telegram]` 配置时 `start` | daemon 正常启动，仅无 TG channel |
+
+---
+
 ## 注意事项
 
 - `rrclaw chat` 断开不影响 daemon，daemon 保留该 session 的 Agent 实例一段时间（可配置 TTL）
