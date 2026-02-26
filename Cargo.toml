@@ -12,7 +12,7 @@ keywords = ["ai", "agent", "cli", "assistant", "llm"]
 categories = ["command-line-utilities", "asynchronous"]
 
 [features]
-default = []
+default = ["telegram"]
 telegram = ["dep:teloxide"]
 
 [dependencies]
