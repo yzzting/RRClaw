@@ -30,6 +30,19 @@ enum Commands {
     /// 启动 Telegram Bot（需要 --features telegram 编译）
     #[cfg(feature = "telegram")]
     Telegram,
+    /// Start daemon (background process with Telegram + IPC socket)
+    Start,
+    /// Connect to running daemon for interactive chat
+    Chat,
+    /// Stop the running daemon
+    Stop,
+    /// Restart the daemon (stop + start)
+    Restart,
+    /// Show daemon status
+    Status,
+    /// Internal: daemon worker process (do not call directly)
+    #[command(hide = true)]
+    DaemonWorker,
     /// 交互式配置向导
     Setup,
     /// 初始化配置文件
@@ -53,6 +66,12 @@ async fn main() -> Result<()> {
         } => run_agent(message, provider, model).await?,
         #[cfg(feature = "telegram")]
         Commands::Telegram => run_telegram().await?,
+        Commands::Start => rrclaw::daemon::start()?,
+        Commands::Chat => rrclaw::daemon::client::run_chat().await?,
+        Commands::Stop => rrclaw::daemon::stop()?,
+        Commands::Restart => rrclaw::daemon::restart()?,
+        Commands::Status => rrclaw::daemon::status()?,
+        Commands::DaemonWorker => rrclaw::daemon::server::run_daemon_worker().await?,
         Commands::Setup => rrclaw::config::run_setup()?,
         Commands::Init => run_init()?,
         Commands::Config => run_config()?,

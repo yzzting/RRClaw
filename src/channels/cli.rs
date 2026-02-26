@@ -105,9 +105,9 @@ impl TelegramRuntime {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = (memory, config);
-            return Err(color_eyre::eyre::eyre!(
+            Err(color_eyre::eyre::eyre!(
                 "Telegram 功能未编译。请使用 --features telegram 重新构建。"
-            ));
+            ))
         }
 
         #[cfg(feature = "telegram")]
