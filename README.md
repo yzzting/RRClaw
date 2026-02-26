@@ -18,6 +18,7 @@
 - **Slash commands** — `/help` `/new` `/clear` `/config` `/switch` `/apikey` `/skill` `/telegram`
 - **MCP client** — connect to MCP servers, dynamic tool loading
 - **Telegram channel** — multi-user isolated sessions via Telegram Bot
+- **Daemon mode** — background process (`rrclaw start/stop/chat`); close the terminal without killing Telegram
 - **Internationalization** — English (default) and Chinese UI, hot-switchable without restart
 
 ---
@@ -115,6 +116,24 @@ rrclaw agent
 rrclaw agent -m "Review the git diff and suggest improvements"
 ```
 
+### Daemon Mode (Telegram + CLI in background)
+
+```bash
+# Start daemon — Telegram Bot runs in background, terminal is free
+rrclaw start
+
+# Connect from any terminal
+rrclaw chat
+
+# Check daemon status
+rrclaw status
+
+# Stop daemon
+rrclaw stop
+```
+
+When the daemon is running, closing the terminal does **not** kill Telegram. Run `rrclaw chat` any time to reconnect.
+
 ---
 
 ## Configuration
@@ -146,6 +165,10 @@ model = "gpt-4o"
 [memory]
 backend = "sqlite"
 auto_save = true
+
+# Optional: Telegram Bot (required for daemon Telegram channel)
+[telegram]
+token = "your-bot-token"
 
 [security]
 autonomy = "supervised"   # "readonly" | "supervised" | "full"
@@ -291,8 +314,9 @@ tail -f ~/.rrclaw/logs/rrclaw.log.*
 | P7 | Dynamic tool loading + Tool group routing | ✅ |
 | P8 | Multi-channel unified entry + Telegram runtime management | ✅ |
 | P9 | Internationalization (English/Chinese) | ✅ |
+| P10 | Daemon mode (background process + Unix socket IPC) | ✅ |
 
-**Test coverage:** 302+ tests (unit + integration + E2E), clippy zero warnings.
+**Test coverage:** 380+ tests (unit + integration + E2E), clippy zero warnings.
 
 ---
 

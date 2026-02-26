@@ -18,6 +18,7 @@
 - **斜杠命令** — `/help` `/new` `/clear` `/config` `/switch` `/apikey` `/skill` `/telegram`
 - **MCP 客户端** — 接入 MCP 协议工具服务器，动态加载工具
 - **Telegram 频道** — Telegram Bot，多用户隔离会话
+- **Daemon 模式** — 后台进程（`rrclaw start/stop/chat`），关闭终端不影响 Telegram 持续运行
 - **国际化** — 英文（默认）和中文 UI，运行时热切换无需重启
 
 ---
@@ -115,6 +116,24 @@ rrclaw agent
 rrclaw agent -m "帮我看一下 git diff，给出改进建议"
 ```
 
+### Daemon 模式（Telegram + CLI 后台运行）
+
+```bash
+# 启动 daemon — Telegram Bot 在后台运行，终端随时可关闭
+rrclaw start
+
+# 从任意终端接入
+rrclaw chat
+
+# 查看 daemon 状态
+rrclaw status
+
+# 停止 daemon
+rrclaw stop
+```
+
+daemon 运行期间关闭终端**不会**停止 Telegram Bot。随时执行 `rrclaw chat` 重新接入。
+
 ---
 
 ## 配置
@@ -146,6 +165,10 @@ model = "gpt-4o"
 [memory]
 backend = "sqlite"
 auto_save = true
+
+# 可选：Telegram Bot（daemon 模式下 Telegram 频道所需）
+[telegram]
+token = "your-bot-token"
 
 [security]
 autonomy = "supervised"   # "readonly" | "supervised" | "full"
@@ -292,8 +315,9 @@ tail -f ~/.rrclaw/logs/rrclaw.log.*
 | P7 | 动态工具加载 + 工具组路由 | ✅ |
 | P8 | 多 Channel 统一入口 + Telegram 运行时管理 | ✅ |
 | P9 | 国际化（中英文） | ✅ |
+| P10 | Daemon 模式（后台进程 + Unix socket IPC） | ✅ |
 
-**测试覆盖：** 302+ 测试（单元 + 集成 + E2E），clippy 零警告。
+**测试覆盖：** 380+ 测试（单元 + 集成 + E2E），clippy 零警告。
 
 ---
 
