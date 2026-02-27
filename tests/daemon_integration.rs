@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Integration tests for the daemon IPC protocol.
 //!
 //! These tests spin up a mock Unix-socket server (no LLM required) and verify:

@@ -3,9 +3,28 @@
 //! Provides background process management so Telegram and other channels
 //! continue running after the terminal is closed.
 
-pub mod client;
 pub mod protocol;
+
+#[cfg(unix)]
+pub mod client;
+#[cfg(unix)]
 pub mod server;
+
+/// Stub: daemon IPC client (Unix only).
+#[cfg(not(unix))]
+pub mod client {
+    pub async fn run_chat() -> color_eyre::eyre::Result<()> {
+        color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
+    }
+}
+
+/// Stub: daemon server worker (Unix only).
+#[cfg(not(unix))]
+pub mod server {
+    pub async fn run_daemon_worker() -> color_eyre::eyre::Result<()> {
+        color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
+    }
+}
 
 use color_eyre::eyre::{eyre, Result};
 use std::path::PathBuf;
@@ -43,6 +62,7 @@ fn read_pid(pid_file: &std::path::Path) -> Option<u32> {
 }
 
 /// Check if a process with the given PID is alive (Unix `kill(pid, 0)`).
+#[cfg(unix)]
 fn is_process_alive(pid: u32) -> bool {
     // SAFETY: signal 0 does not send a signal, only checks if process exists
     unsafe { libc::kill(pid as i32, 0) == 0 }
@@ -57,6 +77,7 @@ fn cleanup_files(pid_file: &std::path::Path, sock_file: &std::path::Path) {
 // ─── Public commands ──────────────────────────────────────────────────────────
 
 /// `rrclaw start` — launch daemon in background via re-exec.
+#[cfg(unix)]
 pub fn start() -> Result<()> {
     let pid_file = pid_path()?;
     let sock_file = sock_path()?;
@@ -107,6 +128,7 @@ pub fn start() -> Result<()> {
 }
 
 /// `rrclaw stop` — send SIGTERM to daemon.
+#[cfg(unix)]
 pub fn stop() -> Result<()> {
     let pid_file = pid_path()?;
     let sock_file = sock_path()?;
@@ -153,12 +175,14 @@ pub fn stop() -> Result<()> {
 }
 
 /// `rrclaw restart` — stop then start.
+#[cfg(unix)]
 pub fn restart() -> Result<()> {
     stop()?;
     start()
 }
 
 /// `rrclaw status` — check if daemon is running.
+#[cfg(unix)]
 pub fn status() -> Result<()> {
     let pid_file = pid_path()?;
     let sock_file = sock_path()?;
@@ -190,6 +214,28 @@ pub fn status() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ─── Non-Unix stubs ───────────────────────────────────────────────────────────
+
+#[cfg(not(unix))]
+pub fn start() -> Result<()> {
+    color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
+}
+
+#[cfg(not(unix))]
+pub fn stop() -> Result<()> {
+    color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
+}
+
+#[cfg(not(unix))]
+pub fn restart() -> Result<()> {
+    color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
+}
+
+#[cfg(not(unix))]
+pub fn status() -> Result<()> {
+    color_eyre::eyre::bail!("Daemon mode is only supported on Unix (macOS/Linux)")
 }
 
 #[cfg(test)]
@@ -234,12 +280,14 @@ mod tests {
         assert!(read_pid(tmp.path()).is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn is_process_alive_self() {
         let pid = std::process::id();
         assert!(is_process_alive(pid));
     }
 
+    #[cfg(unix)]
     #[test]
     fn is_process_alive_nonexistent() {
         // PID 99999999 is very unlikely to exist
