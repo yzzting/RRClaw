@@ -435,7 +435,7 @@ fn d6_3_no_telegram_config_guard_is_none() {
     //   if config.telegram.is_some() { start telegram }
     let telegram_config: Option<String> = None; // represents Config.telegram = None
     assert!(
-        !telegram_config.is_some(),
+        telegram_config.is_none(),
         "no telegram config → guard prevents TG start"
     );
 }
