@@ -2,22 +2,22 @@ class Rrclaw < Formula
   desc "安全优先的 AI 助手 CLI，100% Rust，Trait 可插拔架构"
   homepage "https://github.com/yzzting/rrclaw"
   license "MIT"
-  version "0.0.2"
+  version "0.0.3"
 
   on_macos do
     on_arm do
-      url "https://github.com/yzzting/rrclaw/releases/download/v0.0.2/rrclaw-macos-aarch64.tar.gz"
-      sha256 "ecd5c29d0ab9013708b702beb820839365762c432c08396a03c646d74d940294"
+      url "https://github.com/yzzting/rrclaw/releases/download/v0.0.3/rrclaw-macos-aarch64.tar.gz"
+      sha256 "b1375021fc24d1c5e7a9d9ff74fe284e2fe268b3185c8a5428206fb4d72521d5"
     end
     on_intel do
-      url "https://github.com/yzzting/rrclaw/releases/download/v0.0.2/rrclaw-macos-x86_64.tar.gz"
-      sha256 "71c1ad17a75dff6a013f30beb5e7bbce495f34bde29c83c160a3dc82567de7f9"
+      url "https://github.com/yzzting/rrclaw/releases/download/v0.0.3/rrclaw-macos-x86_64.tar.gz"
+      sha256 "624f731add6c19b98782add9d5fd2519ecccb1d1f256cdcd704580ab0abc2dd1"
     end
   end
 
   on_linux do
-    url "https://github.com/yzzting/rrclaw/releases/download/v0.0.2/rrclaw-linux-x86_64.tar.gz"
-    sha256 "6cb6da4aa4106031f39a97e4766169e9511a0ffd21fd7af6eea4d524da8ec9cd"
+    url "https://github.com/yzzting/rrclaw/releases/download/v0.0.3/rrclaw-linux-x86_64.tar.gz"
+    sha256 "7396cceafc43e63f39250723c157d80de2208c1fbae95dcee4a5f17b584c4652"
   end
 
   def install
